@@ -8,7 +8,7 @@ from app import main
 from app.db import Base
 
 
-def test_publish_is_idempotent_and_questions_stay_with_feature(tmp_path) -> None:
+def test_republish_merges_and_questions_stay_with_feature(tmp_path) -> None:
     test_engine = create_engine(f"sqlite:///{tmp_path / 'test.sqlite3'}", connect_args={"check_same_thread": False})
     Base.metadata.create_all(test_engine)
     session_factory = sessionmaker(bind=test_engine)
@@ -19,7 +19,7 @@ def test_publish_is_idempotent_and_questions_stay_with_feature(tmp_path) -> None
 
     main.app.dependency_overrides[main.get_db] = test_db
     payload = {
-        "external_id": "example/repo:abc123:search",
+        "external_id": "example/repo:search",
         "title": "Faster project search",
         "summary": "Project search now filters results as users type.",
         "repo_url": "https://github.com/example/repo",

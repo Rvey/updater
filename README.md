@@ -81,41 +81,29 @@ Open <http://localhost:5173>. Without a `.env` file the API creates `backend/upd
 
 ## Connect an agent
 
-Start the API, then run **one** of these. Replace the URL with your deployed API HTTPS `/mcp` URL when connecting from another machine.
-
-```bash
-opencode mcp add updater --global --url http://127.0.0.1:8000/mcp
-codex mcp add updater --url http://127.0.0.1:8000/mcp
-claude mcp add --transport http --scope user updater http://127.0.0.1:8000/mcp
-```
-
-Verify with `opencode mcp list`, `codex mcp list`, or `claude mcp list`. The in-app **Connect an agent** dialog builds the same commands for any URL.
-Want `/updater-ship`, `/updater-check`, `/updater-impact` too? `mcp add` cannot register slash commands, so use the one-step installer (MCP + commands). The dialog shows it per agent, or run:
+One command sets up everything — MCP access plus the `/updater`, `/updater-ship`, `/updater-check`, `/updater-impact` commands — for opencode, codex, Claude Code, and Cursor. Replace the URL with your deployed API HTTPS `/mcp` URL when connecting from another machine. (The in-app **Connect an agent** dialog builds the same command for any URL.)
 
 ```bash
 curl -fsSL http://127.0.0.1:8000/connect.sh | bash -s -- --url http://127.0.0.1:8000/mcp --agents all
 ```
-Run it bare for the interactive version — it asks for the token, then lets you pick any of opencode / codex / claude / cursor (one or many), then does the whole setup:
+
+Run it bare for the interactive version — it asks for the token, then lets you pick agents (one or many), then does the whole setup:
 
 ```bash
 curl -fsSL http://127.0.0.1:8000/connect.sh | bash
 ```
 
-If `UPDATER_TOKEN` is set on the API, export it where you launch the agent and use the secured variant:
+Verify with `opencode mcp list`, `codex mcp list`, or `claude mcp list` (Cursor: Settings → MCP Tools shows a green dot). The `mcp add` CLIs cannot register slash commands on their own — that is what the installer adds.
+
+If `UPDATER_TOKEN` is set on the API, export it where you launch the agent before running the installer (it is stored by reference, not pasted):
 
 ```bash
 export UPDATER_TOKEN='your-long-random-secret'
-opencode mcp add updater --global --url http://127.0.0.1:8000/mcp --header 'Authorization=Bearer {env:UPDATER_TOKEN}'
-codex mcp add updater --url http://127.0.0.1:8000/mcp --bearer-token-env-var UPDATER_TOKEN
-claude mcp add --transport http --scope user updater http://127.0.0.1:8000/mcp --header "Authorization: Bearer $UPDATER_TOKEN"
 ```
-
-OpenCode resolves `{env:UPDATER_TOKEN}` at runtime; Codex reads the named env var. Claude Code saves the expanded header into its user MCP settings — protect that file like a credential.
 
 Prefer per-agent credentials: sign in to the web UI, open **API keys** in the sidebar, and create a key per agent. A key (`upk_…`) works anywhere the token does — `Authorization: Bearer upk_…` — and can be revoked individually without touching other agents.
 
-Then copy the short rule in [docs/agent-instructions.md](docs/agent-instructions.md) into each target repo `AGENTS.md` / `CLAUDE.md` so the agent calls `publish_feature` **after shipped work is verified**. Use a stable `external_id` like `owner/repo:feature-slug` (slug is branch after last slash, lowercased); re-publishing the same key merges the new commit under that entry.
-  Guard: first call list_feature_updates for this repo - if the same feature (same branch, PR, or overlapping files) is already shipped, reuse its key; the server stashes the new commit under it.
+Then copy the short rule in [docs/agent-instructions.md](docs/agent-instructions.md) into each target repo `AGENTS.md` / `CLAUDE.md` so the agent calls `publish_feature` **after shipped work is verified**. One feature keeps one key (`owner/repo:feature-slug`, slug is the branch name after the last slash, lowercased): the agent checks `list_feature_updates` first and reuses the key when the same branch, PR, or overlapping files are already shipped; re-publishing merges the new commit under that entry instead of duplicating it.
 
 Stdio fallback (local subprocess transport): `cd backend && uv run python -m app.mcp_server` with `UPDATER_API_URL` + `UPDATER_TOKEN` set.
 If `POST /mcp` answers `421 Invalid Host header`, the fix is server-side: set `MCP_ALLOWED_HOSTS` to the public API hostname (see Configuration) and redeploy the API — reloading or re-adding the MCP client cannot fix a `421`.
@@ -164,7 +152,7 @@ curl -f https://app.example.com/healthz
 | GET | `/api/health` | Liveness check |
 | GET | `/api/config` | Token-protected config flag |
 | GET | `/api/updates?q=&repo=&tag=` | Search + filter updates |
-| POST | `/api/updates` | Publish an update (idempotent on `external_id`) |
+| POST | `/api/updates` | Publish an update (same `external_id` merges under one entry) |
 | GET | `/api/updates/{id}` | Fetch one update with questions + impact notes |
 | POST | `/api/updates/{id}/questions` | Ask about an update |
 | POST | `/api/updates/{id}/impact-notes` | Record observed impact |
@@ -183,7 +171,7 @@ cd backend && uv run pytest -q
 cd frontend && npm run build
 ```
 
-Backend tests cover idempotent publishing, search, question persistence, and invalid repo URLs.
+Backend tests cover merge-on-republish, search, question persistence, and invalid repo URLs.
 
 ## Contributing
 
