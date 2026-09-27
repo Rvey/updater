@@ -2340,3 +2340,212 @@ a {
   background: #262626;
   color: #a5e53c;
 }
+
+.notes-panel {
+  grid-column: 1 / -1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  background: #f8f8f5;
+  padding: 0 38px 60px;
+}
+.notes-panel .feed-heading {
+  padding-left: 0;
+  padding-right: 0;
+}
+.notes-panel .feed-toolbar {
+  margin-top: 18px;
+}
+.note-composer {
+  background: #fff;
+  border: 1px solid #e9e9e4;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 720px;
+}
+.note-composer input,
+.note-composer textarea {
+  border: 1px solid #e9e9e4;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  background: #fcfcfa;
+  color: #22241f;
+  width: 100%;
+  resize: vertical;
+}
+.note-composer input::placeholder,
+.note-composer textarea::placeholder {
+  color: #a1a49b;
+}
+.note-composer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.note-swatches {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.note-swatches.small {
+  gap: 6px;
+}
+.note-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid #00000022;
+  padding: 0;
+  transition: transform 0.15s;
+}
+.note-swatches.small .note-swatch {
+  width: 16px;
+  height: 16px;
+}
+.note-swatch:hover {
+  transform: scale(1.12);
+}
+.note-swatch.active {
+  outline: 2px solid #587d18;
+  outline-offset: 2px;
+}
+.notes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+  margin-top: 22px;
+}
+.note-card {
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid;
+  color: #22241f;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.note-card h3 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+.note-card .note-content {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #3c3f39;
+}
+.note-card .note-date {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #00000088;
+}
+.note-card[data-color="default"] {
+  background: #f1f1ec;
+  border-color: #dcdcd4;
+}
+.note-card[data-color="red"] {
+  background: #fde9e9;
+  border-color: #f0b9b9;
+}
+.note-card[data-color="orange"] {
+  background: #fff0dd;
+  border-color: #eec795;
+}
+.note-card[data-color="yellow"] {
+  background: #fef3b0;
+  border-color: #e7d47a;
+}
+.note-card[data-color="green"] {
+  background: #e4f5e4;
+  border-color: #a9d8a9;
+}
+.note-card[data-color="blue"] {
+  background: #e5eefa;
+  border-color: #a9c4ec;
+}
+.note-card[data-color="purple"] {
+  background: #ece4fa;
+  border-color: #c2abec;
+}
+.note-card[data-color="pink"] {
+  background: #fbe0ec;
+  border-color: #eba9c7;
+}
+.note-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #00000014;
+}
+.note-icon-actions {
+  display: flex;
+  gap: 6px;
+}
+.note-icon-actions button {
+  border: 1px solid #00000022;
+  background: #ffffffaa;
+  border-radius: 7px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: #3c3f39;
+}
+.note-icon-actions button:hover {
+  background: #fff;
+}
+.note-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.note-edit input,
+.note-edit textarea {
+  border: 1px solid #00000022;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: #ffffffbb;
+  color: #22241f;
+  width: 100%;
+  resize: vertical;
+}
+.note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.dark .notes-panel {
+  background: #0a0a0a;
+}
+.dark .note-composer {
+  background: #171717;
+  border-color: #262626;
+}
+.dark .note-composer input,
+.dark .note-composer textarea {
+  background: #0a0a0a;
+  border-color: #262626;
+  color: #e8ece3;
+}
+.dark .note-composer input::placeholder,
+.dark .note-composer textarea::placeholder {
+  color: #6f766c;
+}

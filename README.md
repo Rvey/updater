@@ -61,6 +61,7 @@ Run one CLI command and your agent can publish and read updates through MCP. No 
 - **Ship log UI** — browse, search, and filter every verified feature.
 - **Update detail** — why, how it works, impact, tradeoffs, learning notes, files, tags, branch, commit, PR.
 - **Impact over time** — add dated observations when you learn what a feature actually changed.
+- **Quick notes** — scratch space with per-note colors for follow-ups, reminders, and ideas.
 - **Q&A per update** — ask questions inside the update; answers stay attached to the decision.
 - **Manual add** — capture an update from the UI when no agent was involved.
 - **MCP server** — `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact` over Streamable HTTP at `/mcp` (stdio fallback included).
@@ -189,6 +190,10 @@ curl -f https://updaterapi.blitzgo.io/api/health
 | GET | `/api/updates/{id}` | Fetch one update with questions + impact notes |
 | POST | `/api/updates/{id}/questions` | Ask about an update |
 | POST | `/api/updates/{id}/impact-notes` | Record observed impact |
+| GET | `/api/notes` | List notes (newest first) |
+| POST | `/api/notes` | Create a note with a color |
+| PATCH | `/api/notes/{id}` | Update a note title, content, or color |
+| DELETE | `/api/notes/{id}` | Delete a note |
 | POST | `/mcp` | MCP tools: `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact`, `list_context_requests`, `fulfill_context_request` |
 | POST | `/api/auth/register` | Create an account (first login session returned) |
 | POST | `/api/auth/login` | Sign in (login session returned) |

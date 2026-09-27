@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from .config import get_settings
 from . import auth as auth_utils
-from .db import ApiKey, Base, ContextRequest, ImpactNote, Question, SessionLocal, Update, User, UserSession, engine, get_db, now_utc
+from .db import ApiKey, Base, ContextRequest, ImpactNote, Note, Question, SessionLocal, Update, User, UserSession, engine, get_db, now_utc
 from .explain import explain_question
 from .mcp_server import create_mcp_server
 from .schemas import (
@@ -22,6 +22,10 @@ from .schemas import (
     ContextRequestRead,
     ImpactNoteCreate,
     ImpactNoteRead,
+    NOTE_COLORS,
+    NoteCreate,
+    NoteRead,
+    NoteUpdate,
     QuestionCreate,
     ApiKeyCreate,
     ApiKeyCreated,
@@ -61,7 +65,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -265,6 +269,61 @@ def add_impact_note(update_id: str, payload: ImpactNoteCreate, db: Session = Dep
     db.commit()
     db.refresh(entry)
     return entry
+
+
+def _normalize_note_color(value: str | None) -> str:
+    color = (value or "default").strip().lower()
+    if color not in NOTE_COLORS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid color. Choose one of: {', '.join(NOTE_COLORS)}",
+        )
+    return color
+
+
+@app.get("/api/notes", response_model=list[NoteRead], dependencies=[Depends(require_token)])
+def list_notes(db: Session = Depends(get_db)) -> list[Note]:
+    return list(db.scalars(select(Note).order_by(Note.updated_at.desc(), Note.created_at.desc())).all())
+
+
+@app.post("/api/notes", response_model=NoteRead, status_code=201, dependencies=[Depends(require_token)])
+def create_note(payload: NoteCreate, db: Session = Depends(get_db)) -> Note:
+    entry = Note(
+        title=payload.title.strip(),
+        content=(payload.content or "").strip(),
+        color=_normalize_note_color(payload.color),
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+@app.patch("/api/notes/{note_id}", response_model=NoteRead, dependencies=[Depends(require_token)])
+def update_note(note_id: str, payload: NoteUpdate, db: Session = Depends(get_db)) -> Note:
+    entry = db.get(Note, note_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Note not found")
+    if payload.title is not None:
+        entry.title = payload.title.strip()
+    if payload.content is not None:
+        entry.content = (payload.content or "").strip()
+    if payload.color is not None:
+        entry.color = _normalize_note_color(payload.color)
+    entry.updated_at = now_utc()
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+@app.delete("/api/notes/{note_id}", dependencies=[Depends(require_token)])
+def delete_note(note_id: str, db: Session = Depends(get_db)):
+    entry = db.get(Note, note_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Note not found")
+    db.delete(entry)
+    db.commit()
+    return {"ok": True}
 
 
 @app.post("/api/updates/{update_id}/context-requests", response_model=ContextRequestRead, status_code=201, dependencies=[Depends(require_token)])

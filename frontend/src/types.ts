@@ -29,6 +29,25 @@ export type ImpactNote = {
   created_at: string;
 };
 
+export type NoteColor =
+  | "default"
+  | "red"
+  | "orange"
+  | "yellow"
+  | "green"
+  | "blue"
+  | "purple"
+  | "pink";
+
+export type Note = {
+  id: string;
+  title: string;
+  content: string;
+  color: NoteColor;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Update = {
   id: string;
   external_id: string | null;

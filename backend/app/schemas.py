@@ -56,6 +56,32 @@ class ImpactNoteRead(BaseModel):
     created_at: datetime
 
 
+NOTE_COLORS = ("default", "red", "orange", "yellow", "green", "blue", "purple", "pink")
+
+
+class NoteCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=180)
+    content: str = Field(default="", max_length=10000)
+    color: str = Field(default="default", max_length=20)
+
+
+class NoteUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=180)
+    content: str | None = Field(default=None, max_length=10000)
+    color: str | None = Field(default=None, max_length=20)
+
+
+class NoteRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    content: str
+    color: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class ContextRequestCreate(BaseModel):
     question: str = Field(min_length=3, max_length=2000)
 
