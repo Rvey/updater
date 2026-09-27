@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     mcp_allowed_hosts: str = ""
     cors_origins: str = "http://localhost:5173"
     openrouter_api_key: str = ""
+    allow_open_registration: bool = True
     llm_model: str = "google/gemini-3.5-flash-lite"
 
 

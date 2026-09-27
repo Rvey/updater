@@ -18,6 +18,8 @@ import {
   Github,
   Inbox,
   LockKeyhole,
+  KeyRound,
+  LogOut,
   Menu,
   MessageCircle,
   Plus,
@@ -755,6 +757,109 @@ function UpdateDetail({
   );
 }
 
+type ApiKeyInfo = {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+};
+
+function KeysModal({ close, token }: { close: () => void; token: string }) {
+  const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
+  const [name, setName] = useState("agent key");
+  const [created, setCreated] = useState<{ name: string; key: string } | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    request<ApiKeyInfo[]>("/auth/keys", token)
+      .then(setKeys)
+      .catch((err) => setError(err.message));
+  }, [token]);
+
+  const create = (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    request<{ id: string; name: string; prefix: string; key: string }>("/auth/keys", token, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    })
+      .then((item) => {
+        setCreated({ name: item.name, key: item.key });
+        return request<ApiKeyInfo[]>("/auth/keys", token);
+      })
+      .then(setKeys)
+      .catch((err) => setError(err.message))
+      .finally(() => setBusy(false));
+  };
+
+  const revoke = (id: string) => {
+    request<{ ok: boolean }>(`/auth/keys/${id}`, token, { method: "DELETE" })
+      .then(() => setKeys((current) => current.filter((item) => item.id !== id)))
+      .catch((err) => setError(err.message));
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={close}>
+      <div
+        className="modal setup-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="API keys"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <button
+          className="icon-button modal-close"
+          aria-label="Close"
+          onClick={close}
+        >
+          <X size={18} />
+        </button>
+        <div className="modal-icon">
+          <KeyRound size={22} />
+        </div>
+        <h2>API keys</h2>
+        <p className="modal-intro">
+          Keys sign in your coding agents over MCP and HTTP. Treat a key like a password: keep it in an env var, never in git.
+        </p>
+        {created && (
+          <div className="code-block">
+            <pre>{created.key}</pre>
+          </div>
+        )}
+        {created && (
+          <p className="setup-token-note">
+            Copy it now under a safe place. This is the only time the full key is shown.
+          </p>
+        )}
+        <form onSubmit={create}>
+          <label className="setup-field">
+            New key name
+            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} />
+          </label>
+          <Button type="submit" className="button primary" disabled={busy}>
+            {busy ? "Creating…" : "Create key"}
+          </Button>
+        </form>
+        {keys.map((item) => (
+          <div key={item.id} className="code-block">
+            <button aria-label="Revoke key" onClick={() => revoke(item.id)}>
+              Revoke
+            </button>
+            <pre>{item.name}  {item.prefix}…</pre>
+          </div>
+        ))}
+        {!keys.length && !error && <p className="setup-token-note">No keys yet.</p>}
+        {error && <div className="form-error">{error}</div>}
+      </div>
+    </div>
+  );
+}
+
+
 export default function App() {
   const [token, setToken] = useState(
     () => sessionStorage.getItem("updater-token") || "",
@@ -762,6 +867,11 @@ export default function App() {
   const [draftToken, setDraftToken] = useState(
     () => sessionStorage.getItem("updater-token") || "",
   );
+  const [authMode, setAuthMode] = useState<"login" | "register" | "token">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [accountEmail, setAccountEmail] = useState<string | null>(null);
+  const [keysOpen, setKeysOpen] = useState(false);
   const [updates, setUpdates] = useState<Update[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -802,6 +912,16 @@ export default function App() {
     return () => {
       cancelled = true;
     };
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) {
+      setAccountEmail(null);
+      return;
+    }
+    request<{ email: string | null; legacy: boolean }>("/auth/me", token)
+      .then((info) => setAccountEmail(info.legacy ? null : info.email))
+      .catch(() => setAccountEmail(null));
   }, [token]);
 
   const repositories = useMemo(
@@ -870,6 +990,44 @@ export default function App() {
     setMobileDetail(false);
   };
 
+
+  const openWithToken = (value: string) => {
+    request<Update[]>("/updates", value)
+      .then((items) => {
+        sessionStorage.setItem("updater-token", value);
+        setUpdates(items);
+        setSelectedId(items[0]?.id || null);
+        setToken(value);
+        setUnauthorized(false);
+        setError("");
+      })
+      .catch(() => setError("That token did not work."));
+  };
+
+  const submitAccount = (mode: "login" | "register") => {
+    request<{ email: string; session_token: string }>(`/auth/${mode}`, "", {
+      method: "POST",
+      body: JSON.stringify({ email: authEmail, password: authPassword }),
+    })
+      .then((res) => {
+        setAccountEmail(res.email);
+        openWithToken(res.session_token);
+      })
+      .catch((err) => setError(err.message));
+  };
+
+  const signOut = () => {
+    const current = token;
+    sessionStorage.removeItem("updater-token");
+    setToken("");
+    setDraftToken("");
+    setAccountEmail(null);
+    setUpdates([]);
+    setUnauthorized(true);
+    if (current) {
+      request<{ ok: boolean }>("/auth/logout", current, { method: "POST" }).catch(() => {});
+    }
+  };
   if (unauthorized)
     return (
       <div className="auth-screen">
@@ -883,35 +1041,70 @@ export default function App() {
             <br />
             kept private.
           </h1>
-          <p>
-            Enter the Updater token configured on your API to open your
-            workspace.
-          </p>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              request<Update[]>("/updates", draftToken)
-                .then((items) => {
-                  sessionStorage.setItem("updater-token", draftToken);
-                  setUpdates(items);
-                  setSelectedId(items[0]?.id || null);
-                  setToken(draftToken);
-                  setUnauthorized(false);
+          <div className="setup-tabs">
+            {(["login", "register", "token"] as const).map((item) => (
+              <button
+                key={item}
+                className={authMode === item ? "active" : ""}
+                onClick={() => {
+                  setAuthMode(item);
                   setError("");
-                })
-                .catch(() => setError("That token did not work."));
-            }}
-          >
-            <input
-              type="password"
-              placeholder="Updater token"
-              value={draftToken}
-              onChange={(e) => setDraftToken(e.target.value)}
-            />
-            <Button type="submit" className="button primary">
-              Open workspace <ArrowRight size={16} />
-            </Button>
-          </form>
+                }}
+              >
+                {item === "login" ? "Sign in" : item === "register" ? "Create account" : "Use a token"}
+              </button>
+            ))}
+          </div>
+          <p>
+            {authMode === "register"
+              ? "Create the first account on this server. Afterwards you can issue API keys for your agents."
+              : authMode === "token"
+                ? "Paste the server token or a personal API key."
+                : "Sign in to open your workspace."}
+          </p>
+          {authMode === "token" ? (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                openWithToken(draftToken);
+              }}
+            >
+              <input
+                type="password"
+                placeholder="Updater token or API key"
+                value={draftToken}
+                onChange={(e) => setDraftToken(e.target.value)}
+              />
+              <Button type="submit" className="button primary">
+                Open workspace <ArrowRight size={16} />
+              </Button>
+            </form>
+          ) : (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitAccount(authMode);
+              }}
+            >
+              <input
+                type="email"
+                placeholder="Email"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                autoComplete="email"
+              />
+              <input
+                type="password"
+                placeholder="Password (8+ characters)"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                autoComplete={authMode === "login" ? "current-password" : "new-password"}
+              />
+              <Button type="submit" className="button primary">
+                {authMode === "login" ? "Sign in" : "Create account"} <ArrowRight size={16} />
+              </Button>
+            </form>
+          )}
           {error && <div className="form-error">{error}</div>}
         </div>
       </div>
@@ -988,6 +1181,17 @@ export default function App() {
             }}
           >
             <Settings2 size={17} /> Connect an agent <ArrowUpRight size={15} />
+          </button>
+          <button
+            onClick={() => {
+              setKeysOpen(true);
+              setMobileNav(false);
+            }}
+          >
+            <KeyRound size={17} /> API keys
+          </button>
+          <button onClick={signOut}>
+            <LogOut size={17} /> {accountEmail ? "Sign out (" + accountEmail + ")" : "Sign out"}
           </button>
           <div className="sidebar-foot">
             <span className="status-dot" /> YOUR WORK, REMEMBERED
@@ -1183,6 +1387,7 @@ export default function App() {
         </div>
       </main>
       {setupOpen && <SetupModal close={() => setSetupOpen(false)} serverToken={token} />}
+      {keysOpen && <KeysModal close={() => setKeysOpen(false)} token={token} />}
       {newOpen && (
         <NewModal
           close={() => setNewOpen(false)}

@@ -43,7 +43,7 @@ Run one CLI command and your agent can publish and read updates through MCP. No 
 - **Q&A per update** — ask questions inside the update; answers stay attached to the decision.
 - **Manual add** — capture an update from the UI when no agent was involved.
 - **MCP server** — `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact` over Streamable HTTP at `/mcp` (stdio fallback included).
-- **Token auth** — optional `UPDATER_TOKEN` for API + MCP; required when PostgreSQL is configured.
+- **Auth** — log in with email + password and issue per-agent API keys (`upk_…`), or keep the single `UPDATER_TOKEN` env secret. Either unlocks the API + MCP.
 - **Postgres in prod, SQLite locally** — zero-config local preview, persistent deployment with `DATABASE_URL`.
 - **Dokploy-ready** — separate `web` + `api` services in `compose.dokploy.yml`.
 
@@ -98,6 +98,8 @@ claude mcp add --transport http --scope user updater http://127.0.0.1:8000/mcp -
 
 OpenCode resolves `{env:UPDATER_TOKEN}` at runtime; Codex reads the named env var. Claude Code saves the expanded header into its user MCP settings — protect that file like a credential.
 
+Prefer per-agent credentials: sign in to the web UI, open **API keys** in the sidebar, and create a key per agent. A key (`upk_…`) works anywhere the token does — `Authorization: Bearer upk_…` — and can be revoked individually without touching other agents.
+
 Then copy the short rule in [docs/agent-instructions.md](docs/agent-instructions.md) into each target repo `AGENTS.md` / `CLAUDE.md` so the agent calls `publish_feature` **after shipped work is verified**. Use a stable `external_id` like `owner/repo:commit-sha:feature-slug`; retries return the same update.
 
 Stdio fallback (local subprocess transport): `cd backend && uv run python -m app.mcp_server` with `UPDATER_API_URL` + `UPDATER_TOKEN` set.
@@ -114,6 +116,7 @@ Create `backend/.env` from `backend/.env.example`:
 ```dotenv
 DATABASE_URL=postgresql://user:password@host:5432/updater?sslmode=require
 UPDATER_TOKEN=your-long-random-secret
+ALLOW_OPEN_REGISTRATION=True
 CORS_ORIGINS=http://localhost:5173
 UPDATER_API_URL=http://127.0.0.1:8000
 MCP_ALLOWED_HOSTS=api.example.com
@@ -122,7 +125,8 @@ LLM_MODEL=google/gemini-3.5-flash-lite
 ```
 
 - Omit `DATABASE_URL` locally for SQLite preview.
-- `UPDATER_TOKEN` is required whenever PostgreSQL is configured.
+- `UPDATER_TOKEN` is required whenever PostgreSQL is configured **until an account exists** — afterwards you may remove it and rely on logins + API keys (the server keeps booting once a user row is present).
+- Sign in from the web UI (email + password). Set `ALLOW_OPEN_REGISTRATION=False` after the first account to close sign-ups; the env token keeps working as a fallback either way.
 - `postgres://` and `postgresql://` URLs are accepted. Tables are created on startup.
 - For separate web/API origins, set `CORS_ORIGINS` to the web origin and build the frontend with `VITE_API_BASE_URL` pointing at the API.
 - For a deployed MCP endpoint, set `MCP_ALLOWED_HOSTS` to its public API hostname (bare hostname is enough — any port on it is accepted). The hostname from `UPDATER_API_URL` is used as a fallback for the same check. Without this, every remote `POST /mcp` is rejected with `421 Invalid Host header` before any MCP logic runs.
@@ -150,6 +154,12 @@ curl -f https://app.example.com/healthz
 | POST | `/api/updates/{id}/questions` | Ask about an update |
 | POST | `/api/updates/{id}/impact-notes` | Record observed impact |
 | POST | `/mcp` | MCP tools: `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact`, `list_context_requests`, `fulfill_context_request` |
+| POST | `/api/auth/register` | Create an account (first login session returned) |
+| POST | `/api/auth/login` | Sign in (login session returned) |
+| POST | `/api/auth/logout` | Revoke the current login session |
+| GET | `/api/auth/me` | Who the current credential belongs to |
+| GET/POST | `/api/auth/keys` | List / issue API keys (shown once at creation) |
+| DELETE | `/api/auth/keys/{id}` | Revoke an API key |
 
 ## Checks
 

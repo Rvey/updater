@@ -101,3 +101,42 @@ class UpdateRead(BaseModel):
     questions: list[QuestionRead] = Field(default_factory=list)
     impact_notes: list[ImpactNoteRead] = Field(default_factory=list)
     context_requests: list[ContextRequestRead] = Field(default_factory=list)
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=200)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class AuthResponse(BaseModel):
+    email: str
+    session_token: str
+    expires_at: datetime
+
+
+class ApiKeyCreate(BaseModel):
+    name: str = Field(default="agent key", min_length=1, max_length=80)
+
+
+class ApiKeyCreated(BaseModel):
+    id: str
+    name: str
+    prefix: str
+    key: str
+    created_at: datetime
+
+
+class ApiKeyRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    prefix: str
+    created_at: datetime
+    last_used_at: datetime | None
+    revoked_at: datetime | None
