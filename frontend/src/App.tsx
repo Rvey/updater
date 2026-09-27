@@ -628,8 +628,11 @@ function UpdateDetail({
             ))
           ) : (
             <p className="impact-empty">
-              Add an observation when you learn what this feature changed in
-              practice.
+              {Math.floor(
+                (Date.now() - new Date(update.shipped_at).getTime()) / 86400000,
+              ) < 2
+                ? "Too early for outcomes — this was just shipped. Add the first observation once you've seen it live."
+                : "Shipped " + relativeDate(update.shipped_at) + " with no observations yet. Add what actually changed — metrics, feedback, bugs, or follow-ups. Your connected agent can also record these via add_feature_impact."}
             </p>
           )}
         </div>
