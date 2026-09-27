@@ -1,3 +1,20 @@
+export type CodeExcerpt = {
+  path: string;
+  content: string;
+  start_line: number | null;
+  end_line: number | null;
+};
+
+export type ContextRequest = {
+  id: string;
+  update_id: string;
+  question: string;
+  status: string;
+  excerpts: CodeExcerpt[];
+  created_at: string;
+  fulfilled_at: string | null;
+};
+
 export type Question = {
   id: string;
   question: string;
@@ -29,10 +46,12 @@ export type Update = {
   learning_notes: string;
   files_changed: string[];
   tags: string[];
+  code_context: CodeExcerpt[];
   shipped_at: string;
   created_at: string;
   questions: Question[];
   impact_notes: ImpactNote[];
+  context_requests: ContextRequest[];
 };
 
 export type NewUpdate = Pick<
