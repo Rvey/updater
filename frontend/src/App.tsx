@@ -9,6 +9,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   CircleHelp,
   Code2,
   Command,
@@ -489,6 +490,14 @@ function UpdateDetail({
   const [requestingContext, setRequestingContext] = useState(false);
   const [contextError, setContextError] = useState("");
   const [contextSent, setContextSent] = useState(false);
+  const [threadOpen, setThreadOpen] = useState(false);
+  useEffect(() => {
+    setThreadOpen(false);
+    setQuestion("");
+    setError("");
+    setContextSent(false);
+    setContextError("");
+  }, [update.id]);
   const pendingRequests = (update.context_requests ?? []).filter((item) => item.status === "pending");
   const askAgent = async () => {
     if (requestingContext) return;
@@ -520,10 +529,11 @@ function UpdateDetail({
       const answer = await request<Question>(
         `/updates/${update.id}/questions`,
         token,
-        { method: "POST", body: JSON.stringify({ question: question.trim() }) },
+      { method: "POST", body: JSON.stringify({ question: question.trim() }) },
       );
       onQuestion(answer);
       setQuestion("");
+      setThreadOpen(true);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Unable to answer question",
@@ -554,10 +564,12 @@ function UpdateDetail({
     }
   };
   return (
-    <div className="detail-content" key={update.id}>
-      <button className="mobile-back" onClick={onBack}>
-        <ArrowLeft size={16} /> All updates
-      </button>
+    <div className="detail-wrap" key={update.id}>
+      <div className="detail-scroll">
+        <div className="detail-content">
+          <button className="mobile-back" onClick={onBack}>
+            <ArrowLeft size={16} /> All updates
+          </button>
       <div className="detail-topline">
         <span className="detail-kicker">
           <span className="live-dot" /> SHIPPED FEATURE
@@ -683,76 +695,101 @@ function UpdateDetail({
           )}
         </div>
       )}
-      <section className="conversation">
-        <div className="conversation-heading">
-          <div>
-            <MessageCircle size={18} />
-            <h3>Ask about this update</h3>
-          </div>
-          <span>
-            {update.questions.length
-              ? `${update.questions.length} saved`
-              : "LEARN AS YOU GO"}
-          </span>
         </div>
-        <p>
-          Pick up the thread whenever you need to understand this feature again.
-        </p>
-        {update.questions.map((item) => (
-          <div className="question-pair" key={item.id}>
-            <div className="question-bubble">{item.question}</div>
-            <div className="answer-bubble">
-              <span className="answer-icon">
-                <Sparkles size={15} />
+      </div>
+      <div className="detail-composer">
+        {threadOpen && (
+          <div className="thread-sheet">
+            <div className="thread-sheet-scroll">
+              {update.questions.length ? (
+                update.questions.map((item) => (
+                  <div className="question-pair" key={item.id}>
+                    <div className="question-bubble">{item.question}</div>
+                    <div className="answer-bubble">
+                      <span className="answer-icon">
+                        <Sparkles size={15} />
+                      </span>
+                      <div>
+                        <div className="answer-label">
+                          {item.source === "ai" ? "UPDATER AI" : "SAVED CONTEXT"}
+                        </div>
+                        <p>{item.answer}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="thread-empty">
+                  No questions yet. Ask the first one below — it will stay
+                  attached to this update.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+        <div className="composer-bar">
+          <div className="conversation-heading">
+            <div>
+              <MessageCircle size={18} />
+              <h3>Ask about this update</h3>
+            </div>
+            <button
+              className="thread-toggle"
+              onClick={() => setThreadOpen((v) => !v)}
+              aria-expanded={threadOpen}
+              aria-label={threadOpen ? "Collapse thread" : "Expand thread"}
+            >
+              <span>
+                {update.questions.length
+                  ? `${update.questions.length} saved`
+                  : "LEARN AS YOU GO"}
               </span>
-              <div>
-                <div className="answer-label">
-                  {item.source === "ai" ? "UPDATER AI" : "SAVED CONTEXT"}
-                </div>
-                <p>{item.answer}</p>
-              </div>
-            </div>
+              {threadOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+            </button>
           </div>
-        ))}
-        <form className="ask-form" onSubmit={ask}>
-          <input
-            aria-label="Ask about this update"
-            placeholder="What would you like to understand?"
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-          />
-          <button
-            aria-label="Send question"
-            disabled={asking || !question.trim()}
-          >
-            <ArrowUpRight size={18} />
-          </button>
-        </form>
-        {error && <div className="form-error">{error}</div>}
-        <div className="ask-hint">
-          <LockKeyhole size={12} /> Answers stay attached to this update
-        </div>
-        <div className="agent-proxy">
-          <button className="button subtle" onClick={askAgent} disabled={requestingContext}>
-            {requestingContext ? "Asking your agent…" : "Ask my agent for code context"}
-          </button>
-          <p>
-            Pings the connected agent (opencode, Codex, Claude Code) running in this repo. It reads the local files and sends back only the excerpts needed.
+          <p className="composer-sub">
+            Pick up the thread whenever you need to understand this feature again.
           </p>
-          {contextSent && pendingRequests.length === 0 && (
-            <p className="proxy-note">Request sent — run `list_context_requests` in your agent, then fulfill it. New excerpts appear above.</p>
-          )}
-          {pendingRequests.length > 0 && (
-            <div className="proxy-pending">
-              <span>{pendingRequests.length} waiting on your agent</span>
-              {pendingRequests.map((item) => (
-                <p key={item.id}>“{item.question}”</p>
-              ))}
-            </div>
-          )}
-          {contextError && <div className="form-error">{contextError}</div>}
+          <form className="ask-form" onSubmit={ask}>
+            <input
+              aria-label="Ask about this update"
+              placeholder="What would you like to understand?"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+            />
+            <button
+              aria-label="Send question"
+              disabled={asking || !question.trim()}
+            >
+              <ArrowUpRight size={18} />
+            </button>
+          </form>
+          {error && <div className="form-error">{error}</div>}
+          <div className="ask-hint">
+            <LockKeyhole size={12} /> Answers stay attached to this update
+          </div>
+          <div className="agent-proxy">
+            <button className="button subtle" onClick={askAgent} disabled={requestingContext}>
+              {requestingContext ? "Asking your agent…" : "Ask my agent for code context"}
+            </button>
+            <p>
+              Pings the connected agent (opencode, Codex, Claude Code) running in this repo. It reads the local files and sends back only the excerpts needed.
+            </p>
+            {contextSent && pendingRequests.length === 0 && (
+              <p className="proxy-note">Request sent — run `list_context_requests` in your agent, then fulfill it. New excerpts appear above.</p>
+            )}
+            {pendingRequests.length > 0 && (
+              <div className="proxy-pending">
+                <span>{pendingRequests.length} waiting on your agent</span>
+                {pendingRequests.map((item) => (
+                  <p key={item.id}>“{item.question}”</p>
+                ))}
+              </div>
+            )}
+            {contextError && <div className="form-error">{contextError}</div>}
+          </div>
         </div>
-      </section>
+      </div>
     </div>
   );
 }
