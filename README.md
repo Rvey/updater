@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="frontend/public/icon.svg" alt="Updater icon" width="96" />
+</p>
+
 # Updater — your shipping memory
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-lime.svg)](LICENSE)
