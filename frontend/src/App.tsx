@@ -493,8 +493,10 @@ function UpdateDetail({
   const [contextError, setContextError] = useState("");
   const [contextSent, setContextSent] = useState(false);
   const [threadOpen, setThreadOpen] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(true);
   useEffect(() => {
     setThreadOpen(false);
+    setComposerOpen(true);
     setQuestion("");
     setError("");
     setContextSent(false);
@@ -699,8 +701,8 @@ function UpdateDetail({
       )}
         </div>
       </div>
-      <div className="detail-composer">
-        {threadOpen && (
+      <div className={`detail-composer${composerOpen ? "" : " is-collapsed"}`}>
+        {composerOpen && threadOpen && (
           <div className="thread-sheet">
             <div className="thread-sheet-scroll">
               {update.questions.length ? (
@@ -735,61 +737,78 @@ function UpdateDetail({
               <MessageCircle size={18} />
               <h3>Ask about this update</h3>
             </div>
-            <button
-              className="thread-toggle"
-              onClick={() => setThreadOpen((v) => !v)}
-              aria-expanded={threadOpen}
-              aria-label={threadOpen ? "Collapse thread" : "Expand thread"}
-            >
-              <span>
-                {update.questions.length
-                  ? `${update.questions.length} saved`
-                  : "LEARN AS YOU GO"}
-              </span>
-              {threadOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-            </button>
+            <div className="composer-actions">
+              {composerOpen && (
+                <button
+                  className="thread-toggle"
+                  onClick={() => setThreadOpen((v) => !v)}
+                  aria-expanded={threadOpen}
+                  aria-label={threadOpen ? "Collapse thread" : "Expand thread"}
+                >
+                  <span>
+                    {update.questions.length
+                      ? `${update.questions.length} saved`
+                      : "LEARN AS YOU GO"}
+                  </span>
+                  {threadOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                </button>
+              )}
+              <button
+                className="composer-collapse"
+                onClick={() => setComposerOpen((v) => !v)}
+                aria-expanded={composerOpen}
+                aria-label={composerOpen ? "Collapse ask panel" : "Expand ask panel"}
+                title={composerOpen ? "Collapse ask panel" : "Expand ask panel"}
+              >
+                {composerOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+              </button>
+            </div>
           </div>
-          <p className="composer-sub">
-            Pick up the thread whenever you need to understand this feature again.
-          </p>
-          <form className="ask-form" onSubmit={ask}>
-            <input
-              aria-label="Ask about this update"
-              placeholder="What would you like to understand?"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-            />
-            <button
-              aria-label="Send question"
-              disabled={asking || !question.trim()}
-            >
-              <ArrowUpRight size={18} />
-            </button>
-          </form>
-          {error && <div className="form-error">{error}</div>}
-          <div className="ask-hint">
-            <LockKeyhole size={12} /> Answers stay attached to this update
-          </div>
-          <div className="agent-proxy">
-            <button className="button subtle" onClick={askAgent} disabled={requestingContext}>
-              {requestingContext ? "Asking your agent…" : "Ask my agent for code context"}
-            </button>
-            <p>
-              Pings the connected agent (opencode, Codex, Claude Code) running in this repo. It reads the local files and sends back only the excerpts needed.
-            </p>
-            {contextSent && pendingRequests.length === 0 && (
-              <p className="proxy-note">Request sent — run `list_context_requests` in your agent, then fulfill it. New excerpts appear above.</p>
-            )}
-            {pendingRequests.length > 0 && (
-              <div className="proxy-pending">
-                <span>{pendingRequests.length} waiting on your agent</span>
-                {pendingRequests.map((item) => (
-                  <p key={item.id}>“{item.question}”</p>
-                ))}
+          {composerOpen && (
+            <>
+              <p className="composer-sub">
+                Pick up the thread whenever you need to understand this feature again.
+              </p>
+              <form className="ask-form" onSubmit={ask}>
+                <input
+                  aria-label="Ask about this update"
+                  placeholder="What would you like to understand?"
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                />
+                <button
+                  aria-label="Send question"
+                  disabled={asking || !question.trim()}
+                >
+                  <ArrowUpRight size={18} />
+                </button>
+              </form>
+              {error && <div className="form-error">{error}</div>}
+              <div className="ask-hint">
+                <LockKeyhole size={12} /> Answers stay attached to this update
               </div>
-            )}
-            {contextError && <div className="form-error">{contextError}</div>}
-          </div>
+              <div className="agent-proxy">
+                <button className="button subtle" onClick={askAgent} disabled={requestingContext}>
+                  {requestingContext ? "Asking your agent…" : "Ask my agent for code context"}
+                </button>
+                <p>
+                  Pings the connected agent (opencode, Codex, Claude Code) running in this repo. It reads the local files and sends back only the excerpts needed.
+                </p>
+                {contextSent && pendingRequests.length === 0 && (
+                  <p className="proxy-note">Request sent — run `list_context_requests` in your agent, then fulfill it. New excerpts appear above.</p>
+                )}
+                {pendingRequests.length > 0 && (
+                  <div className="proxy-pending">
+                    <span>{pendingRequests.length} waiting on your agent</span>
+                    {pendingRequests.map((item) => (
+                      <p key={item.id}>“{item.question}”</p>
+                    ))}
+                  </div>
+                )}
+                {contextError && <div className="form-error">{contextError}</div>}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
