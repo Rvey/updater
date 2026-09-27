@@ -633,6 +633,7 @@ a {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: clip;
   overscroll-behavior: contain;
 }
 .detail-content {
@@ -640,6 +641,9 @@ a {
   margin: 0 auto;
   padding: 45px clamp(32px, 4vw, 70px) 36px;
   animation: detail-in 0.28s ease-out both;
+  min-width: 0;
+  overflow-x: clip;
+  overflow-wrap: break-word;
 }
 @keyframes detail-in {
   from {
@@ -682,6 +686,8 @@ a {
   letter-spacing: -0.065em;
   margin: 23px 0 13px;
   font-weight: 800;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .detail-summary {
   color: #767d71;
@@ -689,6 +695,8 @@ a {
   line-height: 1.75;
   margin: 0;
   max-width: 560px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .detail-meta {
   display: flex;
@@ -722,6 +730,10 @@ a {
   grid-template-columns: 38px 1fr;
   padding: 22px 0 26px;
   border-bottom: 1px solid #eeefea;
+  min-width: 0;
+}
+.info-section > * {
+  min-width: 0;
 }
 .section-index {
   color: #c9ccc3;
@@ -737,12 +749,18 @@ a {
   margin: 0 0 12px;
   font-weight: 800;
 }
+.section-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .section-body p {
   white-space: pre-wrap;
   margin: 0;
   color: #72796e;
   font-size: 11px;
   line-height: 1.9;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .learning-note {
   display: flex;
@@ -753,6 +771,13 @@ a {
   padding: 14px 15px;
   margin-top: 17px;
   color: #688335;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.learning-note > div {
+  min-width: 0;
+  flex: 1;
 }
 .learning-note strong {
   display: block;
@@ -760,9 +785,15 @@ a {
   font-size: 10px;
   margin-bottom: 4px;
 }
+.learning-note > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
 .learning-note p {
   color: #897b5e;
   line-height: 1.7;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .impact-timeline {
   display: grid;
@@ -852,6 +883,13 @@ a {
   font-size: 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   border-bottom: 1px solid #eff0eb;
+  min-width: 0;
+}
+.file-list div span {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .file-list div:last-child {
   border-bottom: 0;
