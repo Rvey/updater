@@ -3,7 +3,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import JSONResponse
+from pathlib import Path
+
+from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
@@ -440,6 +442,13 @@ class ProtectedMCPApp:
             await response(scope, receive, send)
             return
         await self.app(scope, receive, send)
+
+
+@app.get("/connect.sh", include_in_schema=False)
+def connect_script() -> PlainTextResponse:
+    # One-step installer: runs mcp add AND installs /updater-* commands.
+    script_path = Path(__file__).with_name("connect.sh")
+    return PlainTextResponse(script_path.read_text(), media_type="text/x-shellscript")
 
 
 mcp_mount = ProtectedMCPApp()

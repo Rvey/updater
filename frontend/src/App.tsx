@@ -16,6 +16,7 @@ import {
   Copy,
   FileCode2,
   GitBranch,
+  GitCommitHorizontal,
   Github,
   Inbox,
   LockKeyhole,
@@ -176,6 +177,7 @@ function shellQuote(value: string) {
 function SetupModal({ close, serverToken }: { close: () => void; serverToken: string }) {
   const tokenConfigured = Boolean(serverToken);
   const [copied, setCopied] = useState(false);
+  const [copiedOne, setCopiedOne] = useState(false);
   const [copyError, setCopyError] = useState(false);
   const [tab, setTab] = useState<"opencode" | "codex" | "claude">("opencode");
   const [secured, setSecured] = useState(tokenConfigured);
@@ -195,6 +197,13 @@ function SetupModal({ close, serverToken }: { close: () => void; serverToken: st
     codex: "codex mcp list",
     claude: "claude mcp list",
   };
+  const connectUrl = new URL('/connect.sh', defaultOrigin).href;
+  const oneStep = {
+    opencode: 'curl -fsSL ' + connectUrl + ' | bash -s -- --url ' + mcpUrl + ' --agents opencode' + (useEmbedded ? ' --token ' + shellQuote(serverToken) : ''),
+    codex: 'curl -fsSL ' + connectUrl + ' | bash -s -- --url ' + mcpUrl + ' --agents codex' + (useEmbedded ? ' --token ' + shellQuote(serverToken) : ''),
+    claude: 'curl -fsSL ' + connectUrl + ' | bash -s -- --url ' + mcpUrl + ' --agents claude' + (useEmbedded ? ' --token ' + shellQuote(serverToken) : ''),
+  };
+  const oneStepAll = 'curl -fsSL ' + connectUrl + ' | bash -s -- --url ' + mcpUrl + ' --agents all' + (useEmbedded ? ' --token ' + shellQuote(serverToken) : '');
   const copy = async () => {
     setCopyError(false);
     const field = document.createElement("textarea");
@@ -218,6 +227,17 @@ function SetupModal({ close, serverToken }: { close: () => void; serverToken: st
     }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
+  };
+  const copyOne = async () => {
+    setCopyError(false);
+    try {
+      await navigator.clipboard.writeText(oneStep[tab]);
+    } catch {
+      setCopyError(true);
+      return;
+    }
+    setCopiedOne(true);
+    window.setTimeout(() => setCopiedOne(false), 1800);
   };
   return (
     <div className="modal-backdrop" onMouseDown={close}>
@@ -272,6 +292,16 @@ function SetupModal({ close, serverToken }: { close: () => void; serverToken: st
             </button>
           ))}
         </div>
+        <p className='setup-verify'>One-step (recommended): MCP + <code>/updater</code>, <code>/updater-ship</code>, <code>/updater-check</code>, <code>/updater-impact</code></p>
+        <div className='code-block'>
+          <button aria-label='Copy one-step command' onClick={copyOne}>
+            {copiedOne ? <Check size={15} /> : <Copy size={15} />}{' '}
+            {copiedOne ? 'Copied' : 'Copy'}
+          </button>
+          <pre>{oneStep[tab]}</pre>
+        </div>
+        <p className='setup-verify'>All agents at once (copy manually): <code>{oneStepAll}</code></p>
+        <p className='setup-verify'>Manual (MCP only):</p>
         <div className="code-block">
           <button aria-label="Copy command" onClick={copy}>
             {copied ? <Check size={15} /> : <Copy size={15} />}{" "}
@@ -297,9 +327,7 @@ function SetupModal({ close, serverToken }: { close: () => void; serverToken: st
         <div className="setup-tip">
           <Sparkles size={16} />
           <span>
-            Add the shipping instruction from the README to each repo. Your
-            agent will call <code>publish_feature</code> after the work is
-            verified.
+            One-step also installs <code>/updater</code> (bare ships the last verified changes, with args it does check, impact, or list), plus <code>/updater-ship</code>, <code>/updater-check</code> and <code>/updater-impact</code>, for opencode, codex, claude and Cursor. Run the installer bare for prompts (token, agents, scope).
           </span>
         </div>
       </div>
@@ -587,6 +615,16 @@ function UpdateDetail({
           <Github size={15} /> {repoOwner(update.repo_url)}/
           {repoName(update.repo_url)} <ArrowUpRight size={14} />
         </a>
+        {update.pr_url && (
+          <a href={update.pr_url} target="_blank" rel="noreferrer">
+            View pull request <ArrowUpRight size={14} />
+          </a>
+        )}
+        {update.commit_sha && (
+          <span title={update.commit_sha}>
+            <GitCommitHorizontal size={14} /> {update.commit_sha.slice(0, 7)}
+          </span>
+        )}
         {update.branch && (
           <span>
             <GitBranch size={14} /> {update.branch}
@@ -688,19 +726,7 @@ function UpdateDetail({
               <pre className="code-excerpt-body">{excerpt.content}</pre>
             </div>
           ))}
-        </section>
-      )}
-      {(update.pr_url || update.commit_sha) && (
-        <div className="source-links">
-          {update.pr_url && (
-            <a href={update.pr_url} target="_blank" rel="noreferrer">
-              View pull request <ArrowUpRight size={14} />
-            </a>
-          )}
-          {update.commit_sha && (
-            <span>Commit {update.commit_sha.slice(0, 7)}</span>
-          )}
-        </div>
+      </section>
       )}
         </div>
       </div>

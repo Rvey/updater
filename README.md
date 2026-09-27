@@ -90,6 +90,16 @@ claude mcp add --transport http --scope user updater http://127.0.0.1:8000/mcp
 ```
 
 Verify with `opencode mcp list`, `codex mcp list`, or `claude mcp list`. The in-app **Connect an agent** dialog builds the same commands for any URL.
+Want `/updater-ship`, `/updater-check`, `/updater-impact` too? `mcp add` cannot register slash commands, so use the one-step installer (MCP + commands). The dialog shows it per agent, or run:
+
+```bash
+curl -fsSL http://127.0.0.1:8000/connect.sh | bash -s -- --url http://127.0.0.1:8000/mcp --agents all
+```
+Run it bare for the interactive version — it asks for the token, then lets you pick any of opencode / codex / claude / cursor (one or many), then does the whole setup:
+
+```bash
+curl -fsSL http://127.0.0.1:8000/connect.sh | bash
+```
 
 If `UPDATER_TOKEN` is set on the API, export it where you launch the agent and use the secured variant:
 
