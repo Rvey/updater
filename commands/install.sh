@@ -321,7 +321,8 @@ Additional context from user: $ARGUMENTS
    - `tradeoffs`, `learning_notes` (key code path to teach the owner)
    - `files_changed`, `tags`
    - `branch`, `commit_sha`, `pr_url`, `author_agent` when available
-   - `external_id`: stable `owner/repo:commit-sha:feature-slug` so retries do not duplicate
+   - `external_id`: stable `owner/repo:feature-slug` (slug is branch after last slash, lowercased) so retries do not duplicate
+  Guard: first call list_feature_updates for this repo - if the same feature (same branch, PR, or overlapping files) is already shipped, reuse its key; the server stashes the new commit under it.
    - `code_context`: 1-5 focused excerpts `{path, content, start_line, end_line}` with the exact functions/hunks that explain the change
 2. Call the Updater MCP tool `publish_feature` with those fields.
 3. Report the returned `id`/`title`. If the MCP tool is unavailable, say the update was NOT recorded — never claim it was.
@@ -369,7 +370,8 @@ Route on the input:
 - About listing, showing, or searching past updates: run LIST.
 
 Flows:
-- SHIP: only for implemented and verified work (tests, build, or manual check). Find the last change or changes via git log and git diff. Gather title, summary, repo_url (HTTPS remote), why, how_it_works (real code path), impact, tradeoffs, learning_notes, files_changed, tags, branch, commit_sha, pr_url, author_agent; stable external_id like owner/repo:sha:slug; 1-5 code_context excerpts with path, content, start_line, end_line. Call publish_feature. Report id and title. If the MCP tool is unavailable, say the update was NOT recorded.
+- SHIP: only for implemented and verified work (tests, build, or manual check). Find the last change or changes via git log and git diff. Gather title, summary, repo_url (HTTPS remote), why, how_it_works (real code path), impact, tradeoffs, learning_notes, files_changed, tags, branch, commit_sha, pr_url, author_agent; stable external_id like owner/repo:slug (branch after last slash, lowercased); 1-5 code_context excerpts with path, content, start_line, end_line. Call publish_feature. Report id and title. If the MCP tool is unavailable, say the update was NOT recorded.
+  Guard: first call list_feature_updates for this repo - if the same feature (same branch, PR, or overlapping files) is already shipped, reuse its key; the server stashes the new commit under it.
 - CHECK: call list_context_requests (status pending) for the current repo, read the needed local files, answer with fulfill_context_request using short excerpts (max 8 files, about 6000 chars each). Never paste secrets, tokens, or full files.
 - IMPACT: call list_feature_updates to find the matching update (get_feature_update for details), then add_feature_impact with ONE dated, measured observation. Never rephrase the expected impact.
 - LIST: call list_feature_updates with the query and summarize; call get_feature_update when one item is asked about.
@@ -395,7 +397,8 @@ Only run after implementation is verified (tests/build/manual check). Do not run
    - `repo_url`: HTTPS remote (e.g. from `git remote get-url origin`)
    - `why`, `how_it_works` (real code path), `impact`, `tradeoffs`, `learning_notes`
    - `files_changed`, `tags`, `branch`, `commit_sha`, `pr_url`, `author_agent` when available
-   - `external_id`: stable `owner/repo:commit-sha:feature-slug`
+   - `external_id`: stable `owner/repo:feature-slug` (slug is branch after last slash, lowercased)
+  Guard: first call list_feature_updates for this repo - if the same feature (same branch, PR, or overlapping files) is already shipped, reuse its key; the server stashes the new commit under it.
    - `code_context`: 1-5 focused excerpts `{path, content, start_line, end_line}`
 2. Call the Updater MCP tool `publish_feature` with those fields.
 3. Report the returned `id`/`title`. If the MCP tool is unavailable, say the update was NOT recorded.
@@ -438,7 +441,8 @@ Route on the input:
 - About listing, showing, or searching past updates: run LIST.
 
 Flows:
-- SHIP: only for implemented and verified work (tests, build, or manual check). Find the last change or changes via git log and git diff. Gather title, summary, repo_url (HTTPS remote), why, how_it_works (real code path), impact, tradeoffs, learning_notes, files_changed, tags, branch, commit_sha, pr_url, author_agent; stable external_id like owner/repo:sha:slug; 1-5 code_context excerpts with path, content, start_line, end_line. Call publish_feature. Report id and title. If the MCP tool is unavailable, say the update was NOT recorded.
+- SHIP: only for implemented and verified work (tests, build, or manual check). Find the last change or changes via git log and git diff. Gather title, summary, repo_url (HTTPS remote), why, how_it_works (real code path), impact, tradeoffs, learning_notes, files_changed, tags, branch, commit_sha, pr_url, author_agent; stable external_id like owner/repo:slug (branch after last slash, lowercased); 1-5 code_context excerpts with path, content, start_line, end_line. Call publish_feature. Report id and title. If the MCP tool is unavailable, say the update was NOT recorded.
+  Guard: first call list_feature_updates for this repo - if the same feature (same branch, PR, or overlapping files) is already shipped, reuse its key; the server stashes the new commit under it.
 - CHECK: call list_context_requests (status pending) for the current repo, read the needed local files, answer with fulfill_context_request using short excerpts (max 8 files, about 6000 chars each). Never paste secrets, tokens, or full files.
 - IMPACT: call list_feature_updates to find the matching update (get_feature_update for details), then add_feature_impact with ONE dated, measured observation. Never rephrase the expected impact.
 - LIST: call list_feature_updates with the query and summarize; call get_feature_update when one item is asked about.
@@ -458,7 +462,8 @@ Only run after implementation is verified (tests/build/manual check). Do not run
 Extra user context: $@
 
 1. Gather facts from the current checkout (do not invent): title, summary, repo_url (HTTPS remote), why, how_it_works (real code path), impact, tradeoffs, learning_notes, files_changed, tags, branch, commit_sha, pr_url, author_agent when available.
-2. Use stable external_id like `owner/repo:commit-sha:feature-slug`.
+2. Use stable external_id like `owner/repo:feature-slug` (slug is branch after last slash, lowercased).
+  Guard: first call list_feature_updates for this repo - if the same feature (same branch, PR, or overlapping files) is already shipped, reuse its key; the server stashes the new commit under it.
 3. Attach 1-5 focused code_context excerpts {path, content, start_line, end_line}.
 4. Call the Updater MCP tool `publish_feature` with those fields.
 5. Report returned id/title. If MCP is unavailable, say update was NOT recorded.
@@ -492,7 +497,8 @@ Publish the just-finished, verified work to Updater via MCP.
 Only run after implementation is verified. Do not run for unfinished work or exploration.
 
 1. Gather facts from checkout (do not invent): title, summary, repo_url, why, how_it_works, impact, tradeoffs, learning_notes, files_changed, tags, branch, commit_sha, pr_url, author_agent.
-2. Use stable external_id `owner/repo:commit-sha:feature-slug`.
+2. Use stable external_id `owner/repo:feature-slug` (slug is branch after last slash, lowercased).
+  Guard: first call list_feature_updates for this repo - if the same feature (same branch, PR, or overlapping files) is already shipped, reuse its key; the server stashes the new commit under it.
 3. Attach 1-5 code_context excerpts {path, content, start_line, end_line}.
 4. Call Updater MCP `publish_feature`. Report id/title. If unavailable, say NOT recorded.
 CMD_EOF
@@ -528,7 +534,8 @@ Route on the input:
 - About listing, showing, or searching past updates: run LIST.
 
 Flows:
-- SHIP: only for implemented and verified work (tests, build, or manual check). Find the last change or changes via git log and git diff. Gather title, summary, repo_url (HTTPS remote), why, how_it_works (real code path), impact, tradeoffs, learning_notes, files_changed, tags, branch, commit_sha, pr_url, author_agent; stable external_id like owner/repo:sha:slug; 1-5 code_context excerpts with path, content, start_line, end_line. Call publish_feature. Report id and title. If the MCP tool is unavailable, say the update was NOT recorded.
+- SHIP: only for implemented and verified work (tests, build, or manual check). Find the last change or changes via git log and git diff. Gather title, summary, repo_url (HTTPS remote), why, how_it_works (real code path), impact, tradeoffs, learning_notes, files_changed, tags, branch, commit_sha, pr_url, author_agent; stable external_id like owner/repo:slug (branch after last slash, lowercased); 1-5 code_context excerpts with path, content, start_line, end_line. Call publish_feature. Report id and title. If the MCP tool is unavailable, say the update was NOT recorded.
+  Guard: first call list_feature_updates for this repo - if the same feature (same branch, PR, or overlapping files) is already shipped, reuse its key; the server stashes the new commit under it.
 - CHECK: call list_context_requests (status pending) for the current repo, read the needed local files, answer with fulfill_context_request using short excerpts (max 8 files, about 6000 chars each). Never paste secrets, tokens, or full files.
 - IMPACT: call list_feature_updates to find the matching update (get_feature_update for details), then add_feature_impact with ONE dated, measured observation. Never rephrase the expected impact.
 - LIST: call list_feature_updates with the query and summarize; call get_feature_update when one item is asked about.
@@ -543,7 +550,8 @@ description: Updater router. Bare use ships the last verified changes via publis
 
 Route on the user input. Empty input, or anything about shipping, saving, or logging the last changes (DEFAULT): run SHIP, then CHECK, in this turn. Pending questions or what the app asked: CHECK. Impact, outcomes, or follow-up on old work: IMPACT. Listing, showing, or searching past updates: LIST.
 
-SHIP: only for implemented and verified work. Find the last change or changes via git log and git diff. Gather title, summary, repo_url, why, how_it_works, impact, tradeoffs, learning_notes, files_changed, tags, branch, commit_sha, pr_url, author_agent; stable external_id like owner/repo:sha:slug; 1-5 code_context excerpts with path, content, start_line, end_line. Call Updater MCP publish_feature. Report id and title. If unavailable, say NOT recorded.
+SHIP: only for implemented and verified work. Find the last change or changes via git log and git diff. Gather title, summary, repo_url, why, how_it_works, impact, tradeoffs, learning_notes, files_changed, tags, branch, commit_sha, pr_url, author_agent; stable external_id like owner/repo:slug (branch after last slash, lowercased); 1-5 code_context excerpts with path, content, start_line, end_line. Call Updater MCP publish_feature. Report id and title. If unavailable, say NOT recorded.
+  Guard: first call list_feature_updates for this repo - if the same feature (same branch, PR, or overlapping files) is already shipped, reuse its key; the server stashes the new commit under it.
 
 CHECK: call list_context_requests (status pending) for the current repo, read needed local files, answer with fulfill_context_request using short excerpts (max 8 files, about 6000 chars each). Never paste secrets or full files.
 
@@ -568,7 +576,8 @@ Only run after implementation is verified (tests/build/manual check). Do not run
    - `repo_url`: HTTPS remote (e.g. from `git remote get-url origin`)
    - `why`, `how_it_works` (real code path), `impact`, `tradeoffs`, `learning_notes`
    - `files_changed`, `tags`, `branch`, `commit_sha`, `pr_url`, `author_agent` when available
-   - `external_id`: stable `owner/repo:commit-sha:feature-slug`
+   - `external_id`: stable `owner/repo:feature-slug` (slug is branch after last slash, lowercased)
+  Guard: first call list_feature_updates for this repo - if the same feature (same branch, PR, or overlapping files) is already shipped, reuse its key; the server stashes the new commit under it.
    - `code_context`: 1-5 focused excerpts `{path, content, start_line, end_line}`
 2. Call the Updater MCP tool `publish_feature` with those fields.
 3. Report the returned `id`/`title`. If the MCP tool is unavailable, say the update was NOT recorded.
@@ -605,7 +614,8 @@ Route on the input:
 - About listing, showing, or searching past updates: run LIST.
 
 Flows:
-- SHIP: only for implemented and verified work (tests, build, or manual check). Find the last change or changes via git log and git diff. Gather title, summary, repo_url (HTTPS remote), why, how_it_works (real code path), impact, tradeoffs, learning_notes, files_changed, tags, branch, commit_sha, pr_url, author_agent; stable external_id like owner/repo:sha:slug; 1-5 code_context excerpts with path, content, start_line, end_line. Call publish_feature. Report id and title. If the MCP tool is unavailable, say the update was NOT recorded.
+- SHIP: only for implemented and verified work (tests, build, or manual check). Find the last change or changes via git log and git diff. Gather title, summary, repo_url (HTTPS remote), why, how_it_works (real code path), impact, tradeoffs, learning_notes, files_changed, tags, branch, commit_sha, pr_url, author_agent; stable external_id like owner/repo:slug (branch after last slash, lowercased); 1-5 code_context excerpts with path, content, start_line, end_line. Call publish_feature. Report id and title. If the MCP tool is unavailable, say the update was NOT recorded.
+  Guard: first call list_feature_updates for this repo - if the same feature (same branch, PR, or overlapping files) is already shipped, reuse its key; the server stashes the new commit under it.
 - CHECK: call list_context_requests (status pending) for the current repo, read the needed local files, answer with fulfill_context_request using short excerpts (max 8 files, about 6000 chars each). Never paste secrets, tokens, or full files.
 - IMPACT: call list_feature_updates to find the matching update (get_feature_update for details), then add_feature_impact with ONE dated, measured observation. Never rephrase the expected impact.
 - LIST: call list_feature_updates with the query and summarize; call get_feature_update when one item is asked about.

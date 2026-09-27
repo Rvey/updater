@@ -151,3 +151,48 @@ def test_agent_proxy_context_flow(tmp_path) -> None:
     finally:
         main.app.dependency_overrides.clear()
         test_engine.dispose()
+
+
+def test_republish_merges_commits_under_one_feature(tmp_path) -> None:
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'merge.sqlite3'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(test_engine)
+    session_factory = sessionmaker(bind=test_engine)
+
+    def test_db() -> Generator[Session, None, None]:
+        with session_factory() as session:
+            yield session
+
+    main.app.dependency_overrides[main.get_db] = test_db
+    base = {
+        "external_id": "example/repo:user-auth",
+        "title": "User auth", "summary": "Users can now sign in with email.",
+        "repo_url": "https://github.com/example/repo", "why": "Users needed accounts.",
+        "how_it_works": "The login endpoint issues sessions.",
+        "impact": "Users stay signed in.", "branch": "rvey/user-auth",
+    }
+    try:
+        with TestClient(main.app) as client:
+            first = client.post("/api/updates", json={
+                **base, "commit_sha": "aaa", "files_changed": ["src/auth.ts"],
+                "tags": ["auth"],
+                "code_context": [{"path": "src/auth.ts", "content": "login()", "start_line": 1, "end_line": 5}],
+            })
+            assert first.status_code == 201, first.text
+            second = client.post("/api/updates", json={
+                **base, "commit_sha": "bbb", "files_changed": ["src/session.ts"],
+                "tags": ["auth", "session"],
+                "code_context": [{"path": "src/session.ts", "content": "refresh()", "start_line": 9, "end_line": 12}],
+            })
+            assert second.status_code == 201, second.text
+            assert second.json()["id"] == first.json()["id"]
+            body = second.json()
+            assert body["commit_sha"] == "bbb"
+            assert body["files_changed"] == ["src/auth.ts", "src/session.ts"]
+            assert body["tags"] == ["auth", "session"]
+            assert [e["path"] for e in body["code_context"]] == ["src/auth.ts", "src/session.ts"]
+            assert body["title"] == "User auth"
+            listed = client.get("/api/updates", params={"q": "sign in"})
+            assert len(listed.json()) == 1
+    finally:
+        main.app.dependency_overrides.clear()
+        test_engine.dispose()

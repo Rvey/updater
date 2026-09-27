@@ -172,12 +172,49 @@ def list_updates(
     return list(db.scalars(query).all())
 
 
+def _merge_republish(existing: Update, payload: UpdateCreate, db: Session) -> Update:
+    'Stash a follow-up publish under one feature entry instead of duplicating it.'
+    if payload.branch:
+        existing.branch = payload.branch
+    if payload.commit_sha:
+        existing.commit_sha = payload.commit_sha
+    if payload.pr_url:
+        existing.pr_url = str(payload.pr_url)
+    if payload.author_agent:
+        existing.author_agent = payload.author_agent
+    files = list(existing.files_changed or [])
+    for f in payload.files_changed or []:
+        if f not in files:
+            files.append(f)
+    existing.files_changed = files
+    tags = list(existing.tags or [])
+    for t in payload.tags or []:
+        if t not in tags:
+            tags.append(t)
+    existing.tags = tags
+    seen = set()
+    for e in existing.code_context or []:
+        if isinstance(e, dict):
+            seen.add((e.get('path'), e.get('start_line'), e.get('end_line')))
+    merged = list(existing.code_context or [])
+    for excerpt in payload.code_context or []:
+        item = excerpt.model_dump(exclude_none=True)
+        key = (item.get('path'), item.get('start_line'), item.get('end_line'))
+        if key not in seen:
+            merged.append(item)
+            seen.add(key)
+    existing.code_context = merged[:12]
+    db.commit()
+    db.refresh(existing)
+    return existing
+
+
 @app.post("/api/updates", response_model=UpdateRead, status_code=201, dependencies=[Depends(require_token)])
 def create_update(payload: UpdateCreate, db: Session = Depends(get_db)) -> Update:
     if payload.external_id:
         existing = db.scalar(select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests)).where(Update.external_id == payload.external_id))
         if existing:
-            return existing
+            return _merge_republish(existing, payload, db)
     data = payload.model_dump(mode="json", exclude_none=True)
     data["repo_url"] = str(payload.repo_url)
     data["pr_url"] = str(payload.pr_url) if payload.pr_url else None
@@ -192,7 +229,7 @@ def create_update(payload: UpdateCreate, db: Session = Depends(get_db)) -> Updat
         if payload.external_id:
             existing = db.scalar(select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests)).where(Update.external_id == payload.external_id))
             if existing:
-                return existing
+                return _merge_republish(existing, payload, db)
         raise HTTPException(status_code=409, detail="Update already exists") from err
     db.refresh(update)
     return update

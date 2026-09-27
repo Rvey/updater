@@ -46,7 +46,11 @@ async def publish_feature(
     """Record a shipped feature with its code context and learning notes.
 
     Call only after implementation and verification. The repo_url must be a reachable repository URL.
-    Set external_id to a stable value such as `owner/repo:commit-sha:feature-slug` to avoid duplicates.
+    Set external_id to `owner/repo:feature-slug` (no commit SHA; slug is the branch name after the
+    last slash, lowercased, other runs as `-`). One feature keeps one key across all its commits:
+    re-publishing the same key stashes the new commit_sha, files, tags, and excerpts under the
+    existing entry instead of duplicating it. Check list_feature_updates first and reuse the key
+    when the same branch, PR, or overlapping files are already shipped.
     learning_notes should teach the owner the key code path in plain language.
     code_context is an optional list of {path, content, start_line, end_line} excerpts read from the
     local codebase — attach the 1-5 focused snippets that explain the change so Updater can answer

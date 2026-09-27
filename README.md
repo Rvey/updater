@@ -114,7 +114,8 @@ OpenCode resolves `{env:UPDATER_TOKEN}` at runtime; Codex reads the named env va
 
 Prefer per-agent credentials: sign in to the web UI, open **API keys** in the sidebar, and create a key per agent. A key (`upk_…`) works anywhere the token does — `Authorization: Bearer upk_…` — and can be revoked individually without touching other agents.
 
-Then copy the short rule in [docs/agent-instructions.md](docs/agent-instructions.md) into each target repo `AGENTS.md` / `CLAUDE.md` so the agent calls `publish_feature` **after shipped work is verified**. Use a stable `external_id` like `owner/repo:commit-sha:feature-slug`; retries return the same update.
+Then copy the short rule in [docs/agent-instructions.md](docs/agent-instructions.md) into each target repo `AGENTS.md` / `CLAUDE.md` so the agent calls `publish_feature` **after shipped work is verified**. Use a stable `external_id` like `owner/repo:feature-slug` (slug is branch after last slash, lowercased); re-publishing the same key merges the new commit under that entry.
+  Guard: first call list_feature_updates for this repo - if the same feature (same branch, PR, or overlapping files) is already shipped, reuse its key; the server stashes the new commit under it.
 
 Stdio fallback (local subprocess transport): `cd backend && uv run python -m app.mcp_server` with `UPDATER_API_URL` + `UPDATER_TOKEN` set.
 If `POST /mcp` answers `421 Invalid Host header`, the fix is server-side: set `MCP_ALLOWED_HOSTS` to the public API hostname (see Configuration) and redeploy the API — reloading or re-adding the MCP client cannot fix a `421`.
