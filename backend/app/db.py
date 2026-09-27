@@ -79,14 +79,52 @@ class ContextRequest(Base):
 
 
 def normalize_database_url(url: str) -> str:
-    if url.startswith("postgres://"):
-        return "postgresql+psycopg://" + url[len("postgres://"):]
-    if url.startswith("postgresql://"):
-        return "postgresql+psycopg://" + url[len("postgresql://"):]
-    return url
+    # Dokploy/env copy-paste often adds surrounding quotes, whitespace, or newlines.
+    # Strip them so a valid URL doesn't fail with SQLAlchemy's cryptic
+    # "Could not parse SQLAlchemy URL" error.
+    cleaned = (url or "").strip().strip("'\"").strip()
+    if not cleaned:
+        raise RuntimeError(
+            "DATABASE_URL is empty. Set it to e.g. "
+            "postgresql://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require "
+            "(URL-encode special chars in the password)."
+        )
+    if cleaned.startswith("postgres://"):
+        return "postgresql+psycopg://" + cleaned[len("postgres://") :]
+    if cleaned.startswith("postgresql://"):
+        return "postgresql+psycopg://" + cleaned[len("postgresql://") :]
+    return cleaned
 
 
-engine = create_engine(normalize_database_url(get_settings().database_url), pool_pre_ping=True)
+def _redacted_url(url: str) -> str:
+    try:
+        from sqlalchemy.engine.url import make_url
+
+        parsed = make_url(normalize_database_url(url))
+        # Hide password if present.
+        if parsed.password:
+            parsed = parsed.set(password="***")
+        return str(parsed)
+    except Exception:
+        # Fall back to showing only scheme + host-ish prefix, never the full secret.
+        cleaned = (url or "").strip()
+        scheme = cleaned.split("://", 1)[0] if "://" in cleaned else cleaned[:16]
+        return f"{scheme}://<redacted> (unparseable, showing scheme only)"
+
+
+try:
+    engine = create_engine(normalize_database_url(get_settings().database_url), pool_pre_ping=True)
+except Exception as exc:
+    raise RuntimeError(
+        "Could not parse DATABASE_URL "
+        f"({_redacted_url(get_settings().database_url)}). "
+        "Expected format: postgresql://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require. "
+        "Common fixes: remove surrounding quotes/spaces/newlines, "
+        "URL-encode special chars in the password (@ -> %40, / -> %2F, : -> %3A, "
+        "# -> %23, ? -> %3F, % -> %25), and make sure the value starts with "
+        "postgresql:// or postgres://. "
+        f"Underlying error: {exc}"
+    ) from exc
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
