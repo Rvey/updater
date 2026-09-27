@@ -119,7 +119,15 @@ async def get_feature_update(update_id: str) -> dict[str, Any]:
 
 
 async def add_feature_impact(update_id: str, observation: str) -> dict[str, Any]:
-    """Record a dated outcome observed after a feature shipped. Use measured facts when available."""
+    """Record a dated outcome observed after a feature shipped.
+
+    Call this when revisiting a repo days/weeks after publish, when the user reports
+    an outcome, metric, bug, or follow-up tied to a past change, or when asked to
+    check Updater for updates missing impact. Find the update with list_feature_updates
+    first. Use measured facts when available (latency before/after, error rates,
+    adoption, user feedback, bugs). One real observation per call — never rephrase
+    the expected impact from publish time.
+    """
     return await api_request("POST", f"/api/updates/{update_id}/impact-notes", {"note": observation})
 
 
@@ -180,8 +188,10 @@ def create_mcp_server() -> FastMCP:
             "Publish a feature update after a feature has actually shipped. Capture the user's reason, "
             "the real implementation, expected impact, tradeoffs, changed files and repository link. "
             "Use facts from the code and task; never invent details. "
-            "You are also the codebase proxy: poll list_context_requests for this repo and fulfill "
-            "pending questions with short local file excerpts."
+            "Use facts from the code and task; never invent details. "
+            "You are also the codebase proxy and impact tracker: poll list_context_requests for this repo "
+            "and fulfill pending questions with short local file excerpts, and record real-world outcomes "
+            "with add_feature_impact when you learn what a shipped feature changed in practice."
         ),
         streamable_http_path="/mcp",
         stateless_http=True,
