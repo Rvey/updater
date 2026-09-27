@@ -77,6 +77,9 @@ def test_register_login_keys_flow(tmp_path, monkeypatch) -> None:
             revoked = client.delete(f"/api/auth/keys/{key_id}", headers=user_headers)
             assert revoked.status_code == 200, revoked.text
             assert client.get("/api/updates", headers=key_headers).status_code == 401
+            after = client.get("/api/auth/keys", headers=user_headers).json()
+            assert after[0]["revoked_at"] is not None
+            assert after[0]["last_used_at"] is not None
 
             assert client.post("/api/auth/logout", headers=user_headers).status_code == 200
             assert client.get("/api/updates", headers=user_headers).status_code == 401

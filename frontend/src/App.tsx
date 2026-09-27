@@ -798,7 +798,13 @@ function KeysModal({ close, token }: { close: () => void; token: string }) {
 
   const revoke = (id: string) => {
     request<{ ok: boolean }>(`/auth/keys/${id}`, token, { method: "DELETE" })
-      .then(() => setKeys((current) => current.filter((item) => item.id !== id)))
+      .then(() =>
+        setKeys((current) =>
+          current.map((item) =>
+            item.id === id ? { ...item, revoked_at: new Date().toISOString() } : item,
+          ),
+        ),
+      )
       .catch((err) => setError(err.message));
   };
 
@@ -846,10 +852,16 @@ function KeysModal({ close, token }: { close: () => void; token: string }) {
         </form>
         {keys.map((item) => (
           <div key={item.id} className="code-block">
-            <button aria-label="Revoke key" onClick={() => revoke(item.id)}>
-              Revoke
-            </button>
-            <pre>{item.name}  {item.prefix}…</pre>
+            {item.revoked_at ? (
+              <button aria-label="Key revoked" disabled>
+                Revoked
+              </button>
+            ) : (
+              <button aria-label="Revoke key" onClick={() => revoke(item.id)}>
+                Revoke
+              </button>
+            )}
+            <pre>{item.name}  {item.prefix}…{item.last_used_at ? "  last used " + item.last_used_at.slice(0, 10) : "  never used"}{item.revoked_at ? "  REVOKED" : ""}</pre>
           </div>
         ))}
         {!keys.length && !error && <p className="setup-token-note">No keys yet.</p>}
