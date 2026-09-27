@@ -23,10 +23,12 @@ import {
   LogOut,
   Menu,
   MessageCircle,
+  Moon,
   Plus,
   Search,
   Settings2,
   Sparkles,
+  Sun,
   X,
 } from "lucide-react";
 import type { ImpactNote, NewUpdate, Question, Update } from "./types";
@@ -934,6 +936,26 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [mobileDetail, setMobileDetail] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    try {
+      const saved = localStorage.getItem("updater-theme");
+      if (saved === "light" || saved === "dark") return saved;
+    } catch {
+      /* ignore */
+    }
+    return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches
+      ? "dark"
+      : "light";
+  });
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    try {
+      localStorage.setItem("updater-theme", theme);
+    } catch {
+      /* ignore */
+    }
+  }, [theme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1081,7 +1103,17 @@ export default function App() {
     return (
       <div className="auth-screen">
         <div className="auth-panel">
-          <Logo />
+          <div className="auth-top">
+            <Logo />
+            <button
+              className="icon-button theme-toggle"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+            </button>
+          </div>
           <div className="auth-symbol">
             <LockKeyhole size={25} />
           </div>
@@ -1274,6 +1306,14 @@ export default function App() {
                 day: "numeric",
               })}
             </span>
+            <button
+              className="icon-button theme-toggle"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+            </button>
             <div className="avatar">U</div>
           </div>
         </header>
