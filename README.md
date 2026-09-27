@@ -101,6 +101,7 @@ OpenCode resolves `{env:UPDATER_TOKEN}` at runtime; Codex reads the named env va
 Then copy the short rule in [docs/agent-instructions.md](docs/agent-instructions.md) into each target repo `AGENTS.md` / `CLAUDE.md` so the agent calls `publish_feature` **after shipped work is verified**. Use a stable `external_id` like `owner/repo:commit-sha:feature-slug`; retries return the same update.
 
 Stdio fallback (local subprocess transport): `cd backend && uv run python -m app.mcp_server` with `UPDATER_API_URL` + `UPDATER_TOKEN` set.
+If `POST /mcp` answers `421 Invalid Host header`, the fix is server-side: set `MCP_ALLOWED_HOSTS` to the public API hostname (see Configuration) and redeploy the API — reloading or re-adding the MCP client cannot fix a `421`.
 
 ## What gets saved
 
@@ -115,7 +116,7 @@ DATABASE_URL=postgresql://user:password@host:5432/updater?sslmode=require
 UPDATER_TOKEN=your-long-random-secret
 CORS_ORIGINS=http://localhost:5173
 UPDATER_API_URL=http://127.0.0.1:8000
-MCP_ALLOWED_HOSTS=
+MCP_ALLOWED_HOSTS=api.example.com
 OPENROUTER_API_KEY=
 LLM_MODEL=google/gemini-3.5-flash-lite
 ```
@@ -124,7 +125,7 @@ LLM_MODEL=google/gemini-3.5-flash-lite
 - `UPDATER_TOKEN` is required whenever PostgreSQL is configured.
 - `postgres://` and `postgresql://` URLs are accepted. Tables are created on startup.
 - For separate web/API origins, set `CORS_ORIGINS` to the web origin and build the frontend with `VITE_API_BASE_URL` pointing at the API.
-- For a deployed MCP endpoint, set `MCP_ALLOWED_HOSTS` to its public hostname (with port when non-80/443).
+- For a deployed MCP endpoint, set `MCP_ALLOWED_HOSTS` to its public API hostname (bare hostname is enough — any port on it is accepted). The hostname from `UPDATER_API_URL` is used as a fallback for the same check. Without this, every remote `POST /mcp` is rejected with `421 Invalid Host header` before any MCP logic runs.
 - Without `OPENROUTER_API_KEY`, questions still work from saved context and say so.
 - Never commit `.env`, `*.db`, or tokens. They are gitignored.
 
