@@ -68,6 +68,13 @@ Run one CLI command and your agent can publish and read updates through MCP. No 
 - **Postgres in prod, SQLite locally** — zero-config local preview, persistent deployment with `DATABASE_URL`.
 - **Dokploy-ready** — separate `web` + `api` services in `compose.dokploy.yml`.
 
+## How it works
+
+1. Your coding agent finishes a feature and verifies it works.
+2. Before replying, the agent sends an update to Updater over MCP — you only ever run one command to set that up.
+3. The update lands in your ship log with the story behind the code.
+4. Later, when a question needs code detail, Updater asks the agent — which already works inside your codebase — to send just the relevant snippets. The app itself never downloads your code.
+
 ## Stack
 
 - Frontend: Vite 7 + React 19 + TypeScript + Tailwind CSS 4 + shadcn/ui (`base-rhea`, zinc, lime primary, Inter/Geist)
@@ -113,6 +120,8 @@ curl -fsSL http://127.0.0.1:8000/connect.sh | bash
 ```
 
 Flags (`--url … --agents all --token …`) are only needed for non-interactive / CI use. Interactive use needs no flags.
+
+The installer validates the token before changing anything: a wrong, revoked, or expired token aborts the setup. Use `--validate-only` to check a token without installing, or `--skip-token-check` to bypass (not recommended).
 
 Verify with `opencode mcp list`, `codex mcp list`, or `claude mcp list` (Cursor: Settings → MCP Tools shows a green dot). The `mcp add` CLIs cannot register slash commands on their own — that is what the installer adds.
 
@@ -222,9 +231,6 @@ MIT — see [LICENSE](LICENSE).
 
 - [agent-skills](https://github.com/addyosmani/agent-skills) for the verify-then-ship inspiration.
 - shadcn/ui for the component preset.
-- **MCP server** — `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact` over Streamable HTTP at `/mcp` (stdio fallback included).
-- **MCP server** — `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact`, plus `list_context_requests` / `fulfill_context_request` for the codebase proxy, over Streamable HTTP at `/mcp` (stdio fallback included).
-- **Codebase context via agent proxy** — the app never clones your repos. It asks the connected agent for short excerpts and only receives what it needs.
 ## Codebase context via the connected agent (proxy)
 
 Updater never clones repositories and never gets full file access. The agent already runs inside your codebase (opencode, Codex, Claude Code), so the app treats it as a **codebase proxy** and only receives the excerpts it needs:
@@ -243,5 +249,3 @@ Agents can also attach `code_context` up front in `publish_feature` (1–5 focus
 | POST | `/api/updates/{id}/context-requests` | Ask the connected agent for code excerpts |
 | GET | `/api/context-requests?status=pending&repo=` | Agent polls waiting requests |
 | POST | `/api/context-requests/{id}/fulfill` | Agent sends back excerpts (also saved on the update) |
-
-## What gets saved
