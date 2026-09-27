@@ -148,7 +148,7 @@ curl -f https://app.example.com/healthz
 | GET | `/api/updates/{id}` | Fetch one update with questions + impact notes |
 | POST | `/api/updates/{id}/questions` | Ask about an update |
 | POST | `/api/updates/{id}/impact-notes` | Record observed impact |
-| POST | `/mcp` | MCP tools: `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact` |
+| POST | `/mcp` | MCP tools: `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact`, `list_context_requests`, `fulfill_context_request` |
 
 ## Checks
 
@@ -184,3 +184,26 @@ MIT — see [LICENSE](LICENSE).
 
 - [agent-skills](https://github.com/addyosmani/agent-skills) for the verify-then-ship inspiration.
 - shadcn/ui for the component preset.
+- **MCP server** — `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact` over Streamable HTTP at `/mcp` (stdio fallback included).
+- **MCP server** — `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact`, plus `list_context_requests` / `fulfill_context_request` for the codebase proxy, over Streamable HTTP at `/mcp` (stdio fallback included).
+- **Codebase context via agent proxy** — the app never clones your repos. It asks the connected agent for short excerpts and only receives what it needs.
+## Codebase context via the connected agent (proxy)
+
+Updater never clones repositories and never gets full file access. The agent already runs inside your codebase (opencode, Codex, Claude Code), so the app treats it as a **codebase proxy** and only receives the excerpts it needs:
+
+![Update detail with code excerpts sent by the agent and the ask-my-agent button](docs/screenshots/code-context.png)
+
+1. You ask a question that needs code detail, or hit **Ask my agent for code context** in the update view.
+2. Updater stores a `context-request` (update + question) and shows it as waiting on your agent.
+3. In your project checkout, the agent polls `list_context_requests`, reads the local files, and answers with `fulfill_context_request` — short excerpts (`path`, `content`, `start_line`, `end_line`, max 8 files).
+4. Excerpts are saved on the update, shown as **CODE FROM YOUR AGENT**, and included in follow-up answers. Private repos stay private: nothing leaves the agent host except the snippets it chooses to send.
+
+Agents can also attach `code_context` up front in `publish_feature` (1–5 focused snippets). The agent rule for both flows lives in [docs/agent-instructions.md](docs/agent-instructions.md).
+
+| Method | Path | Description |
+| --- | --- | --- |
+| POST | `/api/updates/{id}/context-requests` | Ask the connected agent for code excerpts |
+| GET | `/api/context-requests?status=pending&repo=` | Agent polls waiting requests |
+| POST | `/api/context-requests/{id}/fulfill` | Agent sends back excerpts (also saved on the update) |
+
+## What gets saved

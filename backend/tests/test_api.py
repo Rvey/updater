@@ -108,5 +108,46 @@ def test_http_mcp_lists_feature_tools(monkeypatch) -> None:
         )
         assert tools.status_code == 200, tools.text
         assert {tool["name"] for tool in tools.json()["result"]["tools"]} == {
-            "publish_feature", "list_feature_updates", "get_feature_update", "add_feature_impact",
+            "publish_feature", "list_feature_updates", "get_feature_update", "add_feature_impact", "list_context_requests", "fulfill_context_request",
         }
+def test_agent_proxy_context_flow(tmp_path) -> None:
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'proxy.sqlite3'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(test_engine)
+    session_factory = sessionmaker(bind=test_engine)
+
+    def test_db() -> Generator[Session, None, None]:
+        with session_factory() as session:
+            yield session
+
+    main.app.dependency_overrides[main.get_db] = test_db
+    try:
+        with TestClient(main.app) as client:
+            created = client.post("/api/updates", json={
+                "title": "Proxy context feature", "summary": "A feature that needs code excerpts.",
+                "repo_url": "https://github.com/example/repo", "why": "Owners need code-level answers.",
+                "how_it_works": "The agent proxy supplies excerpts on demand.",
+                "impact": "Questions get answered with real code.",
+                "files_changed": ["src/search.ts"],
+            })
+            assert created.status_code == 201, created.text
+            update_id = created.json()["id"]
+            assert created.json()["code_context"] == []
+            requested = client.post(f"/api/updates/{update_id}/context-requests", json={"question": "Where is the debounce implemented?"})
+            assert requested.status_code == 201, requested.text
+            request_id = requested.json()["id"]
+            assert requested.json()["status"] == "pending"
+            pending = client.get("/api/context-requests", params={"repo": "https://github.com/example/repo"})
+            assert pending.status_code == 200
+            assert [item["id"] for item in pending.json()] == [request_id]
+            fulfilled = client.post(f"/api/context-requests/{request_id}/fulfill", json={"excerpts": [
+                {"path": "src/search.ts", "content": "setTimeout(fetchResults, 150)", "start_line": 10, "end_line": 12},
+            ]})
+            assert fulfilled.status_code == 200, fulfilled.text
+            assert fulfilled.json()["status"] == "fulfilled"
+            fetched = client.get(f"/api/updates/{update_id}")
+            assert fetched.status_code == 200
+            assert fetched.json()["code_context"][0]["path"] == "src/search.ts"
+            assert fetched.json()["context_requests"][0]["status"] == "fulfilled"
+    finally:
+        main.app.dependency_overrides.clear()
+        test_engine.dispose()

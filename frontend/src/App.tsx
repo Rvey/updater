@@ -448,18 +448,43 @@ function UpdateDetail({
   token,
   onQuestion,
   onImpact,
+  onRefresh,
   onBack,
 }: {
   update: Update;
   token: string;
   onQuestion: (question: Question) => void;
   onImpact: (note: ImpactNote) => void;
+  onRefresh: (item: Update) => void;
   onBack: () => void;
 }) {
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState("");
   const [impactDraft, setImpactDraft] = useState("");
+  const [requestingContext, setRequestingContext] = useState(false);
+  const [contextError, setContextError] = useState("");
+  const [contextSent, setContextSent] = useState(false);
+  const pendingRequests = (update.context_requests ?? []).filter((item) => item.status === "pending");
+  const askAgent = async () => {
+    if (requestingContext) return;
+    setRequestingContext(true);
+    setContextError("");
+    try {
+      const prompt = question.trim() || "Send the key code excerpts for this change.";
+      await request(`/updates/${update.id}/context-requests`, token, {
+        method: "POST",
+        body: JSON.stringify({ question: prompt }),
+      });
+      const refreshed = await request<Update>(`/updates/${update.id}`, token);
+      onRefresh(refreshed);
+      setContextSent(true);
+    } catch (err) {
+      setContextError(err instanceof Error ? err.message : "Unable to request context");
+    } finally {
+      setRequestingContext(false);
+    }
+  };
   const [savingImpact, setSavingImpact] = useState(false);
   const [impactError, setImpactError] = useState("");
   const ask = async (event: FormEvent) => {
@@ -605,6 +630,23 @@ function UpdateDetail({
           </div>
         </section>
       )}
+      {(update.code_context?.length ?? 0) > 0 && (
+        <section className="files-section">
+          <div className="files-title">
+            <Code2 size={16} /> CODE FROM YOUR AGENT{" "}
+            <span>{update.code_context.length}</span>
+          </div>
+          {update.code_context.map((excerpt) => (
+            <div key={excerpt.path} className="code-excerpt">
+              <div className="code-excerpt-path">
+                {excerpt.path}
+                {excerpt.start_line && excerpt.end_line ? ` · lines ${excerpt.start_line}-${excerpt.end_line}` : ""}
+              </div>
+              <pre className="code-excerpt-body">{excerpt.content}</pre>
+            </div>
+          ))}
+        </section>
+      )}
       {(update.pr_url || update.commit_sha) && (
         <div className="source-links">
           {update.pr_url && (
@@ -665,6 +707,26 @@ function UpdateDetail({
         {error && <div className="form-error">{error}</div>}
         <div className="ask-hint">
           <LockKeyhole size={12} /> Answers stay attached to this update
+        </div>
+        <div className="agent-proxy">
+          <button className="button subtle" onClick={askAgent} disabled={requestingContext}>
+            {requestingContext ? "Asking your agent…" : "Ask my agent for code context"}
+          </button>
+          <p>
+            Pings the connected agent (opencode, Codex, Claude Code) running in this repo. It reads the local files and sends back only the excerpts needed.
+          </p>
+          {contextSent && pendingRequests.length === 0 && (
+            <p className="proxy-note">Request sent — run `list_context_requests` in your agent, then fulfill it. New excerpts appear above.</p>
+          )}
+          {pendingRequests.length > 0 && (
+            <div className="proxy-pending">
+              <span>{pendingRequests.length} waiting on your agent</span>
+              {pendingRequests.map((item) => (
+                <p key={item.id}>“{item.question}”</p>
+              ))}
+            </div>
+          )}
+          {contextError && <div className="form-error">{contextError}</div>}
         </div>
       </section>
     </div>
@@ -777,6 +839,8 @@ export default function App() {
           : item,
       ),
     );
+  const refreshUpdate = (item: Update) =>
+    setUpdates((current) => current.map((existing) => (existing.id === item.id ? item : existing)));
   const chooseRepo = (value: string) => {
     setRepo(value);
     setView("updates");
@@ -1080,6 +1144,7 @@ export default function App() {
                 token={token}
                 onQuestion={addQuestion}
                 onImpact={addImpact}
+                onRefresh={refreshUpdate}
                 onBack={() => setMobileDetail(false)}
               />
             ) : (

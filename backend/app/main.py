@@ -10,10 +10,20 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from .config import get_settings
-from .db import Base, ImpactNote, Question, Update, engine, get_db
+from .db import Base, ContextRequest, ImpactNote, Question, Update, engine, get_db, now_utc
 from .explain import explain_question
 from .mcp_server import create_mcp_server
-from .schemas import ImpactNoteCreate, ImpactNoteRead, QuestionCreate, QuestionRead, UpdateCreate, UpdateRead
+from .schemas import (
+    ContextRequestCreate,
+    ContextRequestFulfill,
+    ContextRequestRead,
+    ImpactNoteCreate,
+    ImpactNoteRead,
+    QuestionCreate,
+    QuestionRead,
+    UpdateCreate,
+    UpdateRead,
+)
 
 
 @asynccontextmanager
@@ -21,6 +31,7 @@ async def lifespan(_: FastAPI):
     if settings.database_url.startswith(("postgres://", "postgresql://", "postgresql+psycopg://")) and not settings.updater_token:
         raise RuntimeError("UPDATER_TOKEN is required when using PostgreSQL")
     Base.metadata.create_all(bind=engine)
+    _ensure_code_context_columns()
     mcp_app = create_mcp_server().streamable_http_app()
     mcp_mount.app = mcp_app
     try:
@@ -39,6 +50,17 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+
+def _ensure_code_context_columns() -> None:
+    from sqlalchemy import inspect, text
+
+    existing = {column["name"] for column in inspect(engine).get_columns("updates")}
+    if "code_context" not in existing:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE updates ADD COLUMN code_context JSON"))
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE updates SET code_context = '[]' WHERE code_context IS NULL"))
 
 
 def require_token(authorization: str | None = Header(default=None)) -> None:
@@ -62,7 +84,7 @@ def list_updates(
     repo: str = Query(default="", max_length=600),
     db: Session = Depends(get_db),
 ) -> list[Update]:
-    query = select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes)).order_by(Update.shipped_at.desc())
+    query = select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests)).order_by(Update.shipped_at.desc())
     if q.strip():
         term = f"%{q.strip()}%"
         query = query.where(or_(Update.title.ilike(term), Update.summary.ilike(term), Update.why.ilike(term), Update.how_it_works.ilike(term)))
@@ -74,7 +96,7 @@ def list_updates(
 @app.post("/api/updates", response_model=UpdateRead, status_code=201, dependencies=[Depends(require_token)])
 def create_update(payload: UpdateCreate, db: Session = Depends(get_db)) -> Update:
     if payload.external_id:
-        existing = db.scalar(select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes)).where(Update.external_id == payload.external_id))
+        existing = db.scalar(select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests)).where(Update.external_id == payload.external_id))
         if existing:
             return existing
     data = payload.model_dump(mode="json", exclude_none=True)
@@ -89,7 +111,7 @@ def create_update(payload: UpdateCreate, db: Session = Depends(get_db)) -> Updat
     except IntegrityError as err:
         db.rollback()
         if payload.external_id:
-            existing = db.scalar(select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes)).where(Update.external_id == payload.external_id))
+            existing = db.scalar(select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests)).where(Update.external_id == payload.external_id))
             if existing:
                 return existing
         raise HTTPException(status_code=409, detail="Update already exists") from err
@@ -99,7 +121,7 @@ def create_update(payload: UpdateCreate, db: Session = Depends(get_db)) -> Updat
 
 @app.get("/api/updates/{update_id}", response_model=UpdateRead, dependencies=[Depends(require_token)])
 def get_update(update_id: str, db: Session = Depends(get_db)) -> Update:
-    update = db.scalar(select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes)).where(Update.id == update_id))
+    update = db.scalar(select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests)).where(Update.id == update_id))
     if not update:
         raise HTTPException(status_code=404, detail="Update not found")
     return update
@@ -124,6 +146,53 @@ def add_impact_note(update_id: str, payload: ImpactNoteCreate, db: Session = Dep
         raise HTTPException(status_code=404, detail="Update not found")
     entry = ImpactNote(update_id=update_id, note=payload.note.strip())
     db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+@app.post("/api/updates/{update_id}/context-requests", response_model=ContextRequestRead, status_code=201, dependencies=[Depends(require_token)])
+def request_code_context(update_id: str, payload: ContextRequestCreate, db: Session = Depends(get_db)) -> ContextRequest:
+    update = db.scalar(select(Update).options(selectinload(Update.context_requests)).where(Update.id == update_id))
+    if not update:
+        raise HTTPException(status_code=404, detail="Update not found")
+    pending = [req for req in update.context_requests if req.status == "pending" and req.question.strip() == payload.question.strip()]
+    if pending:
+        return pending[0]
+    entry = ContextRequest(update_id=update_id, question=payload.question.strip())
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+@app.get("/api/context-requests", response_model=list[ContextRequestRead], dependencies=[Depends(require_token)])
+def list_context_requests(status: str = Query(default="pending", max_length=20), repo: str = Query(default="", max_length=600), db: Session = Depends(get_db)) -> list[ContextRequest]:
+    query = select(ContextRequest).join(Update, ContextRequest.update_id == Update.id).order_by(ContextRequest.created_at.asc())
+    if status.strip():
+        query = query.where(ContextRequest.status == status.strip())
+    if repo.strip():
+        query = query.where(Update.repo_url == repo.strip())
+    return list(db.scalars(query).all())
+
+
+@app.post("/api/context-requests/{request_id}/fulfill", response_model=ContextRequestRead, dependencies=[Depends(require_token)])
+def fulfill_context_request(request_id: str, payload: ContextRequestFulfill, db: Session = Depends(get_db)) -> ContextRequest:
+    entry = db.get(ContextRequest, request_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Context request not found")
+    if entry.status == "fulfilled":
+        return entry
+    excerpts = [excerpt.model_dump(mode="json") for excerpt in payload.excerpts]
+    entry.excerpts = excerpts
+    entry.status = "fulfilled"
+    entry.fulfilled_at = now_utc()
+    update = db.get(Update, entry.update_id)
+    if update is not None:
+        merged = {str(item.get("path")): dict(item) for item in (update.code_context or []) if isinstance(item, dict)}
+        for item in excerpts:
+            merged[str(item.get("path"))] = item
+        update.code_context = list(merged.values())[:8]
     db.commit()
     db.refresh(entry)
     return entry

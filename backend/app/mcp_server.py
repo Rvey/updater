@@ -34,6 +34,7 @@ async def publish_feature(
     impact: str,
     files_changed: list[str],
     tags: list[str],
+    code_context: list[dict[str, Any]] | None = None,
     branch: str = "",
     commit_sha: str = "",
     pr_url: str = "",
@@ -47,7 +48,12 @@ async def publish_feature(
     Call only after implementation and verification. The repo_url must be a reachable repository URL.
     Set external_id to a stable value such as `owner/repo:commit-sha:feature-slug` to avoid duplicates.
     learning_notes should teach the owner the key code path in plain language.
+    code_context is an optional list of {path, content, start_line, end_line} excerpts read from the
+    local codebase — attach the 1-5 focused snippets that explain the change so Updater can answer
+    follow-up questions without further file access.
     """
+    if code_context is None:
+        code_context = []
     result = await api_request(
         "POST",
         "/api/updates",
@@ -60,6 +66,7 @@ async def publish_feature(
             "impact": impact,
             "files_changed": files_changed,
             "tags": tags,
+            "code_context": code_context,
             "branch": branch or None,
             "commit_sha": commit_sha or None,
             "pr_url": pr_url or None,
@@ -70,6 +77,29 @@ async def publish_feature(
         },
     )
     return {"id": result["id"], "title": result["title"], "repo_url": result["repo_url"]}
+
+
+async def list_context_requests(status: str = "pending", repo: str = "") -> list[dict[str, Any]]:
+    """List code-context requests waiting for a connected agent.
+
+    Poll this when working inside a project checkout: each request names the update and the question
+    the owner asked. Read the needed files from the local codebase, then answer with
+    fulfill_context_request using short excerpts (path, content, start_line, end_line).
+    The app only receives the excerpts you send — never full repo access.
+    """
+    from urllib.parse import urlencode
+
+    result = await api_request("GET", f"/api/context-requests?{urlencode({'status': status, 'repo': repo})}")
+    return result
+
+
+async def fulfill_context_request(request_id: str, excerpts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Send back code excerpts for a context request.
+
+    Keep excerpts minimal: only the functions or hunks needed to answer the question
+    (max 8 files, ~6000 chars each). They are stored on the update and used for follow-up Q&A.
+    """
+    return await api_request("POST", f"/api/context-requests/{request_id}/fulfill", {"excerpts": excerpts})
 
 
 async def list_feature_updates(query: str = "") -> list[dict[str, Any]]:
@@ -105,7 +135,9 @@ def create_mcp_server() -> FastMCP:
         instructions=(
             "Publish a feature update after a feature has actually shipped. Capture the user's reason, "
             "the real implementation, expected impact, tradeoffs, changed files and repository link. "
-            "Use facts from the code and task; never invent details."
+            "Use facts from the code and task; never invent details. "
+            "You are also the codebase proxy: poll list_context_requests for this repo and fulfill "
+            "pending questions with short local file excerpts."
         ),
         streamable_http_path="/mcp",
         stateless_http=True,
@@ -116,7 +148,7 @@ def create_mcp_server() -> FastMCP:
             allowed_origins=allowed_origins,
         ),
     )
-    for tool in (publish_feature, list_feature_updates, get_feature_update, add_feature_impact):
+    for tool in (publish_feature, list_feature_updates, get_feature_update, add_feature_impact, list_context_requests, fulfill_context_request):
         server.add_tool(tool)
     return server
 

@@ -8,6 +8,20 @@ from .db import Update
 logger = logging.getLogger(__name__)
 
 
+def _format_excerpts(update: Update) -> str:
+    excerpts = [item for item in (update.code_context or []) if isinstance(item, dict) and item.get("content")]
+    if not excerpts:
+        return "Code excerpts: none attached yet. If the question needs code detail, say so and suggest requesting context from the connected agent."
+    blocks = []
+    for item in excerpts[:8]:
+        path = item.get("path", "unknown file")
+        start = item.get("start_line")
+        end = item.get("end_line")
+        span = f" (lines {start}-{end})" if start and end else ""
+        blocks.append(f"--- {path}{span} ---\n{item.get('content', '')[:6000]}")
+    return "Code excerpts from the connected agent:\n" + "\n".join(blocks)
+
+
 def saved_context(update: Update) -> str:
     return "\n".join(
         [
@@ -21,6 +35,7 @@ def saved_context(update: Update) -> str:
             f"Files: {', '.join(update.files_changed) or 'Not recorded'}",
             f"Repository: {update.repo_url}",
             f"Commit: {update.commit_sha or 'Not recorded'}",
+            _format_excerpts(update),
         ]
     )
 
@@ -40,9 +55,11 @@ async def explain_question(update: Update, question: str) -> tuple[str, str]:
                             {
                                 "role": "system",
                                 "content": (
-                                    "You are a patient coding mentor. Explain this shipped feature to its owner using only "
-                                    "the saved feature context. Be concrete and concise. If the context lacks the answer, "
-                                    "say what is missing. Do not claim to have read the repository."
+                                    "You are a patient coding mentor. Explain this shipped feature to its owner using the "
+                                    "saved feature context and any code excerpts provided by the connected agent. Be concrete "
+                                    "and concise, and cite the excerpt paths you rely on. If the excerpts are missing and the "
+                                    "question needs code detail, say what is missing and suggest requesting context from the "
+                                    "connected agent. Never invent code you were not given."
                                 ),
                             },
                             {"role": "user", "content": f"Saved feature context:\n{context}\n\nQuestion: {question}"},
