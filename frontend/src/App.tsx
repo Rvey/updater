@@ -728,6 +728,18 @@ function UpdateDetail({
           ))}
       </section>
       )}
+      {(update.pr_url || update.commit_sha) && (
+        <div className="source-links">
+          {update.pr_url && (
+            <a href={update.pr_url} target="_blank" rel="noreferrer">
+              View pull request <ArrowUpRight size={14} />
+            </a>
+          )}
+          {update.commit_sha && (
+            <span>Commit {update.commit_sha.slice(0, 7)}</span>
+          )}
+        </div>
+      )}
         </div>
       </div>
       <div className={`detail-composer${composerOpen ? "" : " is-collapsed"}`}>
