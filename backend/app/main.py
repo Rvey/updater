@@ -485,7 +485,14 @@ class ProtectedMCPApp:
 def connect_script() -> PlainTextResponse:
     # One-step installer: runs mcp add AND installs /updater-* commands.
     script_path = Path(__file__).with_name("connect.sh")
-    return PlainTextResponse(script_path.read_text(), media_type="text/x-shellscript")
+    script = script_path.read_text()
+    # Make the bare `curl .../connect.sh | bash` default to this server's
+    # public URL, so no --url flag is needed: it prompts for API key,
+    # then agent selection. Local dev keeps 127.0.0.1 as default.
+    base = (settings.updater_api_url or "").rstrip("/")
+    if base and base != "http://127.0.0.1:8000":
+        script = script.replace("http://127.0.0.1:8000/mcp", f"{base}/mcp")
+    return PlainTextResponse(script, media_type="text/x-shellscript")
 
 
 mcp_mount = ProtectedMCPApp()

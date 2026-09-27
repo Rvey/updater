@@ -14,6 +14,7 @@
 #   bash commands/install.sh --url https://api.example.com/mcp --agents opencode,cursor --scope project --project-dir /path/to/repo
 #   UPDATER_TOKEN=secret bash commands/install.sh --url https://api.example.com/mcp --agents all
 #   bash commands/install.sh --url http://127.0.0.1:8000/mcp --token my-secret --agents claude
+#   bash commands/install.sh --url https://api.example.com/mcp --token my-secret --validate-only
 #   curl -fsSL https://api.example.com/connect.sh | bash -s -- --url https://api.example.com/mcp --agents all -y
 #
 # Interactive (prompts for token, then agent selection, for anything not flagged):
@@ -34,6 +35,9 @@ SKIP_COMMANDS=0
 DRY_RUN=0
 NONINTERACTIVE=0
 FORCE_INTERACTIVE=0
+SKIP_TOKEN_CHECK=0
+VALIDATE_ONLY=0
+_TOKEN_VALIDATED=0
 
 usage() {
   sed -n "1,60p" "$0"
@@ -49,6 +53,8 @@ usage() {
   echo "  --skip-mcp           only install slash commands"
   echo '  --skip-commands      only set up MCP'
   echo "  --dry-run            print actions without executing"
+  echo "  --skip-token-check   skip online token validation (not recommended)"
+  echo "  --validate-only      validate the token against the server, then exit"
   echo '  -y, --yes            non-interactive: never prompt, fail if --url is missing'
   echo '  --interactive        force interactive prompts when a terminal is available'
   echo "  -h, --help           show this help"
@@ -56,6 +62,7 @@ usage() {
   echo 'Env: UPDATER_TOKEN (used by reference when --token is absent)'
   echo '     UPDATER_CONNECT_NO_TTY=1 (read prompts from stdin instead of /dev/tty)'
   echo '     UPDATER_CONNECT_FORCE_STDIN=1 (answer prompts from stdin; for pipes and CI)'
+  echo '     UPDATER_SKIP_TOKEN_CHECK=1 (same as --skip-token-check)'
 }
 
 log() { printf "%s\n" "$*"; }
@@ -152,6 +159,259 @@ select_agents() {
   AGENTS='all'
   log 'Keeping default: all agents.'
 }
+api_base_from_url() {
+  _b="$1"
+  _b="${_b%/}"
+  case "$_b" in
+    */mcp) _b="${_b%/mcp}" ;;
+  esac
+  _b="${_b%/}"
+  if [ -z "$_b" ]; then _b="/"; fi
+  printf '%s' "$_b"
+}
+check_token_shape() {
+  _s_tok="$1"
+  case "$_s_tok" in
+    *' '*|*$'\t'*|*$'\n'*)
+      printf 'token contains whitespace — it was probably truncated or pasted with extra characters'
+      return 1
+      ;;
+  esac
+  _s_len=${#_s_tok}
+  if [ "$_s_len" -lt 8 ]; then
+    printf 'token is too short (%s chars) — it looks truncated; expected upk_… / ups_… or the server token' "$_s_len"
+    return 1
+  fi
+  case "$_s_tok" in
+    upk_*|ups_*)
+      if [ "$_s_len" -lt 12 ]; then
+        printf 'token with upk_/ups_ prefix is too short — it looks truncated'
+        return 1
+      fi
+      ;;
+  esac
+  return 0
+}
+_token_http_get() {
+  _h_url="$1"
+  _h_tok="$2"
+  _h_out="$3"
+  : > "$_h_out" 2>/dev/null || true
+  if has curl; then
+    if [ -n "$_h_tok" ]; then
+      _h_code="$(curl -s -m 10 -o "$_h_out" -w '%{http_code}' -H "Authorization: Bearer $_h_tok" "$_h_url" 2>/dev/null)" || _h_code="000"
+    else
+      _h_code="$(curl -s -m 10 -o "$_h_out" -w '%{http_code}' "$_h_url" 2>/dev/null)" || _h_code="000"
+    fi
+    case "$_h_code" in ''|*[!0-9]*) _h_code="000" ;; esac
+    printf '%s' "$_h_code"
+    return 0
+  fi
+  if has python3; then
+    UPDATER_CHECK_URL="$_h_url" UPDATER_CHECK_TOKEN="$_h_tok" UPDATER_CHECK_OUT="$_h_out" python3 - <<'PYEOF' 2>/dev/null
+import os
+import urllib.request
+url = os.environ["UPDATER_CHECK_URL"]
+tok = os.environ.get("UPDATER_CHECK_TOKEN", "")
+out = os.environ["UPDATER_CHECK_OUT"]
+req = urllib.request.Request(url)
+if tok:
+    req.add_header("Authorization", "Bearer " + tok)
+try:
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        body = resp.read()
+        code = resp.status or 200
+except Exception as exc:
+    code = getattr(exc, "code", None)
+    try:
+        body = exc.read()
+    except Exception:
+        body = b""
+    if not isinstance(code, int):
+        print("000")
+        raise SystemExit(0)
+try:
+    with open(out, "wb") as fh:
+        fh.write(body)
+except Exception:
+    pass
+print(code)
+PYEOF
+    return 0
+  fi
+  printf '000'
+  return 0
+}
+describe_token_owner() {
+  _d_body="$(cat "$1" 2>/dev/null)"
+  case "$_d_body" in
+    *'"legacy"'*true*)
+      printf 'legacy server token'
+      return 0
+      ;;
+  esac
+  _d_email="$(printf '%s' "$_d_body" | sed -n 's/.*"email"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  if [ -n "$_d_email" ]; then
+    printf 'user %s' "$_d_email"
+  else
+    printf 'token'
+  fi
+}
+validate_token_online() {
+  _v_tok="$1"
+  _v_base="$2"
+  _v_tmp="$(mktemp 2>/dev/null || printf '/tmp/updater-token-check.%s' "$$")"
+  _v_code="$(_token_http_get "$_v_base/api/auth/me" "$_v_tok" "$_v_tmp")"
+  case "$_v_code" in ''|*[!0-9]*) _v_code="000" ;; esac
+  case "$_v_code" in
+    200)
+      _v_who="$(describe_token_owner "$_v_tmp")"
+      rm -f "$_v_tmp"
+      log "Token valid ($_v_who)."
+      _TOKEN_VALIDATED=1
+      return 0
+      ;;
+    401|403)
+      rm -f "$_v_tmp"
+      return 1
+      ;;
+    404)
+      _v_code2="$(_token_http_get "$_v_base/api/updates" "$_v_tok" "$_v_tmp")"
+      case "$_v_code2" in ''|*[!0-9]*) _v_code2="000" ;; esac
+      rm -f "$_v_tmp"
+      case "$_v_code2" in
+        200)
+          log "Token valid."
+          _TOKEN_VALIDATED=1
+          return 0
+          ;;
+        401|403)
+          return 1
+          ;;
+        *)
+          return 2
+          ;;
+      esac
+      ;;
+    000)
+      rm -f "$_v_tmp"
+      return 2
+      ;;
+    *)
+      rm -f "$_v_tmp"
+      return 2
+      ;;
+  esac
+}
+run_token_validation() {
+  if [ "$SKIP_TOKEN_CHECK" = "1" ] || [ "${UPDATER_SKIP_TOKEN_CHECK:-}" = "1" ]; then
+    log "Skipping token validation (--skip-token-check). A wrong or expired token will fail later when agents call the server."
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ] && [ "$VALIDATE_ONLY" != "1" ]; then
+    log "[dry-run] skipping token validation."
+    return 0
+  fi
+  if ! has curl && ! has python3; then
+    log "WARNING: cannot validate the token (need curl or python3); continuing without validation."
+    return 0
+  fi
+  _r_api="$(api_base_from_url "$MCP_URL")"
+  _r_attempt=0
+  while [ "$_r_attempt" -lt 3 ]; do
+    if [ "$AUTH_MODE" = "none" ]; then
+      _r_ptmp="$(mktemp 2>/dev/null || printf '/tmp/updater-token-probe.%s' "$$")"
+      _r_pcode="$(_token_http_get "$_r_api/api/updates" "" "$_r_ptmp")"
+      case "$_r_pcode" in ''|*[!0-9]*) _r_pcode="000" ;; esac
+      rm -f "$_r_ptmp"
+      case "$_r_pcode" in
+        200)
+          log "No token supplied; server allows unauthenticated access (fresh preview). Continuing."
+          _TOKEN_VALIDATED=1
+          return 0
+          ;;
+        401|403)
+          if [ "$INTERACTIVE" = "1" ] && [ "$_r_attempt" -lt 2 ]; then
+            log "The server at $_r_api requires a token, but none was supplied."
+            ask_secret TOKEN 'Updater token (paste upk_... or server token): '
+            if [ -z "$TOKEN" ]; then
+              echo "ERROR: this server requires a token; re-run with --token or UPDATER_TOKEN." >&2
+              return 1
+            fi
+            AUTH_MODE="embedded"
+            _r_attempt=$((_r_attempt + 1))
+            continue
+          fi
+          echo "ERROR: the server at $_r_api requires a token, but none was supplied." >&2
+          echo "Re-run with --token TOKEN, or export UPDATER_TOKEN, then retry." >&2
+          return 1
+          ;;
+        000)
+          log "WARNING: could not reach $_r_api to check auth; continuing without validation."
+          return 0
+          ;;
+        *)
+          log "WARNING: unexpected response ($_r_pcode) while checking $_r_api; continuing without validation."
+          return 0
+          ;;
+      esac
+    fi
+    if [ "$AUTH_MODE" = "embedded" ]; then
+      _r_cand="$TOKEN"
+    else
+      _r_cand="${UPDATER_TOKEN:-}"
+    fi
+    if ! _r_err="$(check_token_shape "$_r_cand")"; then
+      if [ "$INTERACTIVE" = "1" ] && [ "$_r_attempt" -lt 2 ]; then
+        log "ERROR: ${_r_err:-invalid token}."
+        if [ "$AUTH_MODE" = "env" ]; then
+          log "The UPDATER_TOKEN environment value looks broken; enter a replacement (saved to MCP config, env left untouched)."
+        fi
+        ask_secret TOKEN 'Updater token (paste again, or Ctrl-C to abort): '
+        if [ -z "$TOKEN" ]; then
+          echo "ERROR: no valid token supplied." >&2
+          return 1
+        fi
+        AUTH_MODE="embedded"
+        _r_attempt=$((_r_attempt + 1))
+        continue
+      fi
+      echo "ERROR: ${_r_err:-invalid token}." >&2
+      echo "Paste a fresh key (upk_… from the web UI sidebar) or session (ups_…), or re-run with UPDATER_TOKEN set." >&2
+      return 1
+    fi
+    if validate_token_online "$_r_cand" "$_r_api"; then
+      return 0
+    else
+      _r_v="$?"
+      if [ "$_r_v" = "2" ]; then
+        log "WARNING: could not reach $_r_api to validate the token; continuing without validation."
+        log "If agents later report 401 errors, the token or URL is probably wrong."
+        return 0
+      fi
+      if [ "$INTERACTIVE" = "1" ] && [ "$_r_attempt" -lt 2 ]; then
+        log "ERROR: token rejected by $_r_api (wrong, revoked, or expired — or it belongs to another server)."
+        if [ "$AUTH_MODE" = "env" ]; then
+          log "The UPDATER_TOKEN environment value was rejected; enter a replacement (env left untouched)."
+        fi
+        ask_secret TOKEN 'Updater token (paste a fresh upk_... / ups_..., or Ctrl-C to abort): '
+        if [ -z "$TOKEN" ]; then
+          echo "ERROR: token rejected; aborting before writing MCP configs." >&2
+          return 1
+        fi
+        AUTH_MODE="embedded"
+        _r_attempt=$((_r_attempt + 1))
+        continue
+      fi
+      echo "ERROR: token rejected by $_r_api (HTTP 401/403): wrong, revoked, or expired — or it belongs to another server." >&2
+      echo "Issue a fresh key (web UI sidebar → API keys, upk_…) or session (ups_…), confirm --url matches that server, then retry." >&2
+      echo "Aborting before writing MCP configs. Bypass with --skip-token-check (not recommended)." >&2
+      return 1
+    fi
+  done
+  echo "ERROR: token validation failed after 3 attempts; aborting." >&2
+  return 1
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -163,6 +423,8 @@ while [ $# -gt 0 ]; do
     --skip-mcp) SKIP_MCP=1; shift;;
     --skip-commands) SKIP_COMMANDS=1; shift;;
     --dry-run) DRY_RUN=1; shift;;
+    --skip-token-check) SKIP_TOKEN_CHECK=1; shift;;
+    --validate-only) VALIDATE_ONLY=1; shift;;
     -y|--yes) NONINTERACTIVE=1; shift;;
     --interactive) FORCE_INTERACTIVE=1; shift;;
     -h|--help) usage; exit 0;;
@@ -201,6 +463,23 @@ fi
 if [ "$AUTH_MODE" = "env" ]; then
   log "NOTE: Claude Code saves the expanded Authorization header to its MCP settings file — protect that file like a credential."
   log "NOTE: restart Cursor completely after changing its mcp.json so it picks up the MCP server."
+fi
+
+# ---- token validation: refuse to install with a wrong/broken token ----
+if [ "$VALIDATE_ONLY" = "1" ] && { [ "$SKIP_TOKEN_CHECK" = "1" ] || [ "${UPDATER_SKIP_TOKEN_CHECK:-}" = "1" ]; }; then
+  echo "ERROR: --validate-only cannot be combined with --skip-token-check." >&2
+  exit 1
+fi
+if ! run_token_validation; then
+  exit 1
+fi
+if [ "$VALIDATE_ONLY" = "1" ]; then
+  if [ "${_TOKEN_VALIDATED:-0}" = "1" ]; then
+    log "Token check passed (no changes made)."
+    exit 0
+  fi
+  echo "ERROR: token validation was inconclusive (could not reach the server)." >&2
+  exit 1
 fi
 
 if [ "$AGENTS_GIVEN" != "1" ] && [ "$INTERACTIVE" = "1" ]; then

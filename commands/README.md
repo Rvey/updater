@@ -30,6 +30,7 @@ curl -fsSL https://api.example.com/connect.sh | bash
 Notes:
 - Cursor has no `mcp add` CLI, so the script merges the server into `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project), keeping any servers already there. Restart Cursor completely afterwards.
 - `--agents` also accepts numbers (`1,4`) and names; `all` (default) covers every agent.
+- The script validates the token before changing anything: it checks the shape locally (no whitespace, not truncated) and then calls `GET /api/auth/me` on the server. A wrong, revoked, or expired token aborts with exit 1 — interactive mode lets you paste again (up to 3 tries). Use `--validate-only` to check a token without installing anything, or `--skip-token-check` to bypass (not recommended).
 
 The in-app Connect dialog shows this one-step command per agent (plus an all-agents variant).
 

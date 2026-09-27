@@ -13,6 +13,23 @@ Updater is an open-source shipping log for work done with coding agents. When an
 
 > Screenshots below are the real app running locally with demo content.
 
+## Live deployment
+
+Deployed API: <https://updaterapi.blitzgo.io>
+
+- Health: <https://updaterapi.blitzgo.io/api/health>
+- API docs: <https://updaterapi.blitzgo.io/docs>
+- MCP endpoint: <https://updaterapi.blitzgo.io/mcp>
+- Connect script: <https://updaterapi.blitzgo.io/connect.sh>
+
+Connect an agent to the deployed version:
+
+```bash
+curl -fsSL https://updaterapi.blitzgo.io/connect.sh | bash
+```
+
+It prompts for your API key (`upk_…` from the web UI sidebar → API keys), then lets you pick agents (one or many). No `--url` / `--agents` flags needed — the script already defaults to this server.
+
 ## Screenshots
 
 ### The real thing — workspace, ship log, and update detail
@@ -81,17 +98,21 @@ Open <http://localhost:5173>. Without a `.env` file the API creates `backend/upd
 
 ## Connect an agent
 
-One command sets up everything — MCP access plus the `/updater`, `/updater-ship`, `/updater-check`, `/updater-impact` commands — for opencode, codex, Claude Code, and Cursor. Replace the URL with your deployed API HTTPS `/mcp` URL when connecting from another machine. (The in-app **Connect an agent** dialog builds the same command for any URL.)
+One command sets up everything — MCP access plus the `/updater`, `/updater-ship`, `/updater-check`, `/updater-impact` commands — for opencode, codex, Claude Code, and Cursor. It prompts for your API key, then lets you pick agents (one or many). (The in-app **Connect an agent** dialog builds the same command for any URL.)
+
+Deployed version:
 
 ```bash
-curl -fsSL http://127.0.0.1:8000/connect.sh | bash -s -- --url http://127.0.0.1:8000/mcp --agents all
+curl -fsSL https://updaterapi.blitzgo.io/connect.sh | bash
 ```
 
-Run it bare for the interactive version — it asks for the token, then lets you pick agents (one or many), then does the whole setup:
+Local preview:
 
 ```bash
 curl -fsSL http://127.0.0.1:8000/connect.sh | bash
 ```
+
+Flags (`--url … --agents all --token …`) are only needed for non-interactive / CI use. Interactive use needs no flags.
 
 Verify with `opencode mcp list`, `codex mcp list`, or `claude mcp list` (Cursor: Settings → MCP Tools shows a green dot). The `mcp add` CLIs cannot register slash commands on their own — that is what the installer adds.
 
@@ -140,9 +161,12 @@ LLM_MODEL=google/gemini-3.5-flash-lite
 
 See [DEPLOY.md](DEPLOY.md) for Dokploy (Compose app, external Postgres, `compose.dokploy.yml`, `web` on port 80 + `api` on port 8000, HTTPS for both).
 
+Deployed version: API is live at <https://updaterapi.blitzgo.io> (`compose.dokploy.yml` already defaults `UPDATER_API_URL` / `MCP_ALLOWED_HOSTS` to that host).
+
 ```bash
 curl -f https://api.example.com/api/health
 curl -f https://app.example.com/healthz
+curl -f https://updaterapi.blitzgo.io/api/health
 ```
 
 ## API + MCP reference
