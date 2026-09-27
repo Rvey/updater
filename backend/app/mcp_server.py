@@ -123,11 +123,55 @@ async def add_feature_impact(update_id: str, observation: str) -> dict[str, Any]
     return await api_request("POST", f"/api/updates/{update_id}/impact-notes", {"note": observation})
 
 
+def _expand_allowed_hosts(entries: list[str]) -> list[str]:
+    """Expand bare hostnames so both `host` and `host:*` match.
+
+    The MCP SDK validates the Host header by exact match, except for
+    trailing `:*` wildcard-port entries. A reverse proxy (Cloudflare,
+    Dokploy) typically forwards `Host: public.example.com` with no port
+    for 443, while direct access may include one (`host:8000`). Accept
+    both forms for every configured hostname so operators only need to
+    list the bare hostname.
+    """
+    seen: set[str] = set()
+    expanded: list[str] = []
+    for entry in entries:
+        entry = entry.strip()
+        if not entry or entry in seen:
+            continue
+        seen.add(entry)
+        expanded.append(entry)
+        if ":" not in entry:
+            wildcard = f"{entry}:*"
+            if wildcard not in seen:
+                seen.add(wildcard)
+                expanded.append(wildcard)
+    return expanded
+
+
+def _api_url_hosts(api_url: str) -> list[str]:
+    """Derive candidate Host entries from UPDATER_API_URL as a fallback."""
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(api_url.strip())
+    except Exception:
+        return []
+    host = (parsed.hostname or "").strip()
+    if not host or host in {"127.0.0.1", "localhost", "::1"}:
+        return []
+    hosts = [host]
+    if parsed.port:
+        hosts.append(f"{host}:{parsed.port}")
+    return hosts
+
+
 def create_mcp_server() -> FastMCP:
     """Create a fresh server because the HTTP session manager has a single lifespan."""
     settings = get_settings()
-    allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
-    allowed_hosts.extend(host.strip() for host in settings.mcp_allowed_hosts.split(",") if host.strip())
+    configured = [host.strip() for host in settings.mcp_allowed_hosts.split(",") if host.strip()]
+    configured.extend(_api_url_hosts(settings.updater_api_url))
+    allowed_hosts = _expand_allowed_hosts(["127.0.0.1:*", "localhost:*", "[::1]:*"] + configured)
     allowed_origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
     allowed_origins.extend(origin.strip() for origin in settings.cors_origins.split(",") if origin.strip())
     server = FastMCP(
