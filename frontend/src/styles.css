@@ -1630,10 +1630,28 @@ a {
   padding: 0 12px;
   border: 1px solid #e2e6dc;
   border-radius: 7px;
+  background: #fafbf8;
+  color: #30362e;
+  font-size: 13px;
   outline: 0;
+  transition:
+    border-color 0.18s,
+    box-shadow 0.18s;
 }
 .auth-panel input:focus {
   border-color: #9ac546;
+  box-shadow: 0 0 0 3px #cbe99644;
+}
+.auth-panel input::placeholder {
+  color: #a6aca1;
+}
+.auth-submit {
+  width: 100%;
+  min-height: 40px;
+}
+.auth-eyebrow {
+  display: block;
+  margin: 24px 0 0;
 }
 .mobile-menu,
 .mobile-close,

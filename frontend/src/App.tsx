@@ -1165,6 +1165,7 @@ export default function App() {
           <div className="auth-symbol">
             <LockKeyhole size={25} />
           </div>
+          <div className="eyebrow auth-eyebrow">{authMode === "register" ? "CREATE YOUR ACCOUNT" : authMode === "token" ? "AGENT ACCESS" : "WELCOME BACK"}</div>
           <h1>
             Your shipping memory,
             <br />
@@ -1204,7 +1205,7 @@ export default function App() {
                 value={draftToken}
                 onChange={(e) => setDraftToken(e.target.value)}
               />
-              <Button type="submit" className="button primary">
+              <Button type="submit" className="button primary auth-submit">
                 Open workspace <ArrowRight size={16} />
               </Button>
             </form>
@@ -1229,7 +1230,7 @@ export default function App() {
                 onChange={(e) => setAuthPassword(e.target.value)}
                 autoComplete={authMode === "login" ? "current-password" : "new-password"}
               />
-              <Button type="submit" className="button primary">
+              <Button type="submit" className="button primary auth-submit">
                 {authMode === "login" ? "Sign in" : "Create account"} <ArrowRight size={16} />
               </Button>
             </form>
