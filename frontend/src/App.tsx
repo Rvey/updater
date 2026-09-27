@@ -164,19 +164,26 @@ function InfoSection({
   );
 }
 
-function SetupModal({ close, tokenConfigured }: { close: () => void; tokenConfigured: boolean }) {
+function shellQuote(value: string) {
+  return "'" + value.replace(/'/g, "'\''") + "'";
+}
+
+function SetupModal({ close, serverToken }: { close: () => void; serverToken: string }) {
+  const tokenConfigured = Boolean(serverToken);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
   const [tab, setTab] = useState<"opencode" | "codex" | "claude">("opencode");
   const [secured, setSecured] = useState(tokenConfigured);
+  const [embedToken, setEmbedToken] = useState(tokenConfigured);
   const defaultOrigin = apiBase || (window.location.port === "5173"
     ? `${window.location.protocol}//${window.location.hostname}:8000`
     : window.location.origin);
   const [mcpUrl, setMcpUrl] = useState(new URL("/mcp", defaultOrigin).href);
+  const useEmbedded = secured && embedToken && serverToken.length > 0;
   const commands = {
-    opencode: `opencode mcp add updater --global --url ${mcpUrl}${secured ? ' --header "Authorization=Bearer {env:UPDATER_TOKEN}"' : ""}`,
-    codex: `codex mcp add updater --url ${mcpUrl}${secured ? " --bearer-token-env-var UPDATER_TOKEN" : ""}`,
-    claude: `claude mcp add --transport http --scope user updater ${mcpUrl}${secured ? ' --header "Authorization: Bearer $UPDATER_TOKEN"' : ""}`,
+    opencode: `opencode mcp add updater --global --url ${mcpUrl}${secured ? (useEmbedded ? ` --header ${shellQuote("Authorization=Bearer " + serverToken)}` : ' --header "Authorization=Bearer {env:UPDATER_TOKEN}"') : ""}`,
+    codex: `codex mcp add updater --url ${mcpUrl}${secured ? (useEmbedded ? ` --bearer-token ${shellQuote(serverToken)}` : " --bearer-token-env-var UPDATER_TOKEN") : ""}`,
+    claude: `claude mcp add --transport http --scope user updater ${mcpUrl}${secured ? (useEmbedded ? ` --header ${shellQuote("Authorization: Bearer " + serverToken)}` : ' --header "Authorization: Bearer $UPDATER_TOKEN"') : ""}`,
   };
   const verify = {
     opencode: "opencode mcp list",
@@ -239,6 +246,12 @@ function SetupModal({ close, tokenConfigured }: { close: () => void; tokenConfig
           <input type="checkbox" checked={secured} onChange={(event) => setSecured(event.target.checked)} />
           My server requires an Updater token
         </label>
+        {secured && serverToken && (
+          <label className="setup-check">
+            <input type="checkbox" checked={embedToken} onChange={(event) => setEmbedToken(event.target.checked)} />
+            Insert my current token directly (copy-paste ready)
+          </label>
+        )}
         <div className="setup-tabs">
           {(["opencode", "codex", "claude"] as const).map((item) => (
             <button
@@ -263,10 +276,19 @@ function SetupModal({ close, tokenConfigured }: { close: () => void; tokenConfig
         </div>
         {copyError && <p className="setup-token-note">Copy was blocked by the browser. Select the command above to copy it.</p>}
         <p className="setup-verify">Check connection: <code>{verify[tab]}</code></p>
-        {secured && <p className="setup-token-note">
-          Set <code>UPDATER_TOKEN</code> in the terminal before running the command and launching the agent.
-          Claude Code saves the expanded authorization header in its user MCP settings.
-        </p>}
+        {useEmbedded ? (
+          <p className="setup-token-note">
+            This command contains your secret token. Anyone with it can access your workspace. It will also be saved in your shell history
+            (and in Claude Code's MCP settings file). Untick the box above for the safer env-var version.
+          </p>
+        ) : (
+          secured && (
+            <p className="setup-token-note">
+              Set <code>UPDATER_TOKEN</code> in the terminal before running the command and launching the agent. Claude Code saves the expanded
+              authorization header in its user MCP settings.
+            </p>
+          )
+        )}
         <div className="setup-tip">
           <Sparkles size={16} />
           <span>
@@ -1160,7 +1182,7 @@ export default function App() {
           </section>
         </div>
       </main>
-      {setupOpen && <SetupModal close={() => setSetupOpen(false)} tokenConfigured={Boolean(token)} />}
+      {setupOpen && <SetupModal close={() => setSetupOpen(false)} serverToken={token} />}
       {newOpen && (
         <NewModal
           close={() => setNewOpen(false)}
