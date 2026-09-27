@@ -871,6 +871,8 @@ function KeysModal({ close, token }: { close: () => void; token: string }) {
   const [created, setCreated] = useState<{ name: string; key: string } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(false);
+  const [copyError, setCopyError] = useState(false);
 
   useEffect(() => {
     request<ApiKeyInfo[]>("/auth/keys", token)
@@ -882,6 +884,8 @@ function KeysModal({ close, token }: { close: () => void; token: string }) {
     event.preventDefault();
     setBusy(true);
     setError("");
+    setCopyError(false);
+    setCopiedKey(false);
     request<{ id: string; name: string; prefix: string; key: string }>("/auth/keys", token, {
       method: "POST",
       body: JSON.stringify({ name }),
@@ -893,6 +897,31 @@ function KeysModal({ close, token }: { close: () => void; token: string }) {
       .then(setKeys)
       .catch((err) => setError(err.message))
       .finally(() => setBusy(false));
+  };
+
+  const copyCreated = async () => {
+    if (!created) return;
+    setCopyError(false);
+    try {
+      await navigator.clipboard.writeText(created.key);
+    } catch {
+      try {
+        const field = document.createElement("textarea");
+        field.value = created.key;
+        field.style.position = "fixed";
+        field.style.opacity = "0";
+        document.body.appendChild(field);
+        field.select();
+        const ok = document.execCommand("copy");
+        field.remove();
+        if (!ok) throw new Error("copy failed");
+      } catch {
+        setCopyError(true);
+        return;
+      }
+    }
+    setCopiedKey(true);
+    window.setTimeout(() => setCopiedKey(false), 1800);
   };
 
   const revoke = (id: string) => {
@@ -932,13 +961,20 @@ function KeysModal({ close, token }: { close: () => void; token: string }) {
         </p>
         {created && (
           <div className="code-block">
+            <button aria-label="Copy API key" onClick={copyCreated}>
+              {copiedKey ? <Check size={15} /> : <Copy size={15} />}{" "}
+              {copiedKey ? "Copied" : "Copy"}
+            </button>
             <pre>{created.key}</pre>
           </div>
         )}
         {created && (
           <p className="setup-token-note">
-            Copy it now under a safe place. This is the only time the full key is shown.
+            Copy it now in a safe place. This is the only time the full key is shown.
           </p>
+        )}
+        {created && copyError && (
+          <p className="setup-token-note">Copy was blocked by the browser. Select the key above to copy it.</p>
         )}
         <form onSubmit={create}>
           <label className="setup-field">
