@@ -17,6 +17,7 @@ from .db import ApiKey, Base, ContextRequest, ImpactNote, Note, Question, Sessio
 from .explain import explain_question
 from .mcp_server import create_mcp_server
 from .schemas import (
+    ContextRequestClaim,
     ContextRequestCreate,
     ContextRequestFulfill,
     ContextRequestRead,
@@ -59,6 +60,7 @@ async def lifespan(_: FastAPI):
             )
     _ensure_code_context_columns()
     _ensure_note_columns()
+    _ensure_ownership_columns()
     mcp_app = create_mcp_server().streamable_http_app()
     mcp_mount.app = mcp_app
     try:
@@ -88,6 +90,38 @@ def _ensure_code_context_columns() -> None:
             connection.execute(text("ALTER TABLE updates ADD COLUMN code_context JSON"))
     with engine.begin() as connection:
         connection.execute(text("UPDATE updates SET code_context = '[]' WHERE code_context IS NULL"))
+
+
+def _ensure_ownership_columns() -> None:
+    from sqlalchemy import inspect, text
+    try:
+        update_cols = {column["name"] for column in inspect(engine).get_columns("updates")}
+    except Exception:
+        update_cols = set()
+    try:
+        ctx_cols = {column["name"] for column in inspect(engine).get_columns("context_requests")}
+    except Exception:
+        ctx_cols = set()
+    with engine.begin() as connection:
+        if "user_id" not in update_cols:
+            connection.execute(text("ALTER TABLE updates ADD COLUMN user_id VARCHAR(36)"))
+        if "source_repo_url" not in ctx_cols:
+            connection.execute(text("ALTER TABLE context_requests ADD COLUMN source_repo_url VARCHAR(600)"))
+        if "source_branch" not in ctx_cols:
+            connection.execute(text("ALTER TABLE context_requests ADD COLUMN source_branch VARCHAR(255)"))
+        if "source_commit" not in ctx_cols:
+            connection.execute(text("ALTER TABLE context_requests ADD COLUMN source_commit VARCHAR(80)"))
+        if "claimed_by" not in ctx_cols:
+            connection.execute(text("ALTER TABLE context_requests ADD COLUMN claimed_by VARCHAR(100)"))
+        if "claimed_at" not in ctx_cols:
+            connection.execute(text("ALTER TABLE context_requests ADD COLUMN claimed_at TIMESTAMPTZ"))
+
+
+def _optional_user(db, authorization):
+    try:
+        return _user_for_bearer(db, authorization)
+    except Exception:
+        return None
 
 
 def require_token(
@@ -188,12 +222,16 @@ def list_updates(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
+    authorization: str | None = Header(default=None),
 ) -> list[Update]:
     query = select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests)).order_by(Update.shipped_at.desc())
     if q.strip():
         term = f"%{q.strip()}%"
         query = query.where(or_(Update.title.ilike(term), Update.summary.ilike(term), Update.why.ilike(term), Update.how_it_works.ilike(term)))
     items = list(db.scalars(query).all())
+    owner = _optional_user(db, authorization)
+    if owner is not None:
+        items = [u for u in items if getattr(u, "user_id", None) in (None, owner.id)]
     if repo.strip():
         wanted = _normalize_repo_url(repo)
         items = [u for u in items if _normalize_repo_url(u.repo_url) == wanted]
@@ -242,7 +280,8 @@ def _merge_republish(existing: Update, payload: UpdateCreate, db: Session) -> Up
 
 
 @app.post("/api/updates", response_model=UpdateRead, status_code=201, dependencies=[Depends(require_token)])
-def create_update(payload: UpdateCreate, db: Session = Depends(get_db)) -> Update:
+def create_update(payload: UpdateCreate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> Update:
+    _ensure_ownership_columns()
     if payload.external_id:
         existing = db.scalar(select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests)).where(Update.external_id == payload.external_id))
         if existing:
@@ -250,6 +289,9 @@ def create_update(payload: UpdateCreate, db: Session = Depends(get_db)) -> Updat
     data = payload.model_dump(mode="json", exclude_none=True)
     data["repo_url"] = str(payload.repo_url)
     data["pr_url"] = str(payload.pr_url) if payload.pr_url else None
+    owner = _optional_user(db, authorization)
+    if owner is not None:
+        data["user_id"] = owner.id
     if payload.shipped_at:
         data["shipped_at"] = payload.shipped_at
     update = Update(**data)
@@ -658,11 +700,19 @@ def request_code_context(update_id: str, payload: ContextRequestCreate, db: Sess
 
 
 @app.get("/api/context-requests", response_model=list[ContextRequestRead], dependencies=[Depends(require_token)])
-def list_context_requests(status: str = Query(default="pending", max_length=20), repo: str = Query(default="", max_length=600), db: Session = Depends(get_db)) -> list[ContextRequest]:
+def list_context_requests(status: str = Query(default="pending", max_length=20), repo: str = Query(default="", max_length=600), db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> list[ContextRequest]:
+    _ensure_ownership_columns()
     query = select(ContextRequest).join(Update, ContextRequest.update_id == Update.id).options(joinedload(ContextRequest.update)).order_by(ContextRequest.created_at.asc())
     if status.strip():
-        query = query.where(ContextRequest.status == status.strip())
+        wanted_status = status.strip()
+        if "," in wanted_status:
+            query = query.where(ContextRequest.status.in_([s.strip() for s in wanted_status.split(",") if s.strip()]))
+        else:
+            query = query.where(ContextRequest.status == wanted_status)
     items = list(db.scalars(query).all())
+    owner = _optional_user(db, authorization)
+    if owner is not None:
+        items = [it for it in items if it.update is None or getattr(it.update, "user_id", None) in (None, owner.id)]
     if repo.strip():
         wanted = _normalize_repo_url(repo)
         items = [it for it in items if it.update is not None and _normalize_repo_url(it.update.repo_url) == wanted]
@@ -670,22 +720,64 @@ def list_context_requests(status: str = Query(default="pending", max_length=20),
 
 
 @app.post("/api/context-requests/{request_id}/fulfill", response_model=ContextRequestRead, dependencies=[Depends(require_token)])
-def fulfill_context_request(request_id: str, payload: ContextRequestFulfill, db: Session = Depends(get_db)) -> ContextRequest:
+def fulfill_context_request(request_id: str, payload: ContextRequestFulfill, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> ContextRequest:
+    _ensure_ownership_columns()
     entry = db.get(ContextRequest, request_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Context request not found")
     if entry.status == "fulfilled":
         return entry
+    update = db.get(Update, entry.update_id)
+    if update is None:
+        raise HTTPException(status_code=404, detail="Update not found")
+    owner = _optional_user(db, authorization)
+    if owner is not None and getattr(update, "user_id", None) not in (None, owner.id):
+        raise HTTPException(status_code=403, detail="This request belongs to another account")
+    claimed_repo = (payload.repo_url or "").strip()
+    if claimed_repo:
+        if _normalize_repo_url(claimed_repo) != _normalize_repo_url(update.repo_url):
+            raise HTTPException(status_code=409, detail=f"Wrong project: request is for {update.repo_url}, fulfill came from {claimed_repo.strip()}. Run this check inside the mapped checkout.")
+        entry.source_repo_url = claimed_repo.strip()[:600]
+    if payload.branch:
+        entry.source_branch = payload.branch.strip()[:255]
+    if payload.commit_sha:
+        entry.source_commit = payload.commit_sha.strip()[:80]
     excerpts = [excerpt.model_dump(mode="json") for excerpt in payload.excerpts]
     entry.excerpts = excerpts
     entry.status = "fulfilled"
     entry.fulfilled_at = now_utc()
+    merged = {str(item.get("path")): dict(item) for item in (update.code_context or []) if isinstance(item, dict)}
+    for item in excerpts:
+        merged[str(item.get("path"))] = item
+    update.code_context = list(merged.values())[:8]
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+@app.post("/api/context-requests/{request_id}/claim", response_model=ContextRequestRead, dependencies=[Depends(require_token)])
+def claim_context_request(request_id: str, payload: ContextRequestClaim, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> ContextRequest:
+    _ensure_ownership_columns()
+    entry = db.get(ContextRequest, request_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Context request not found")
+    if entry.status == "fulfilled":
+        return entry
     update = db.get(Update, entry.update_id)
-    if update is not None:
-        merged = {str(item.get("path")): dict(item) for item in (update.code_context or []) if isinstance(item, dict)}
-        for item in excerpts:
-            merged[str(item.get("path"))] = item
-        update.code_context = list(merged.values())[:8]
+    owner = _optional_user(db, authorization)
+    if owner is not None and update is not None and getattr(update, "user_id", None) not in (None, owner.id):
+        raise HTTPException(status_code=403, detail="This request belongs to another account")
+    agent = (payload.agent or "").strip()[:100] or None
+    now = now_utc()
+    if entry.status == "claimed" and entry.claimed_at is not None:
+        claimed_at = entry.claimed_at
+        if claimed_at.tzinfo is None:
+            claimed_at = claimed_at.replace(tzinfo=now.tzinfo)
+        if (now - claimed_at).total_seconds() < 600:
+            return entry
+    entry.status = "claimed"
+    entry.claimed_at = now
+    entry.claimed_by = agent
     db.commit()
     db.refresh(entry)
     return entry

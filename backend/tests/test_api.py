@@ -108,7 +108,7 @@ def test_http_mcp_lists_feature_tools(monkeypatch) -> None:
         )
         assert tools.status_code == 200, tools.text
         assert {tool["name"] for tool in tools.json()["result"]["tools"]} == {
-            "publish_feature", "list_feature_updates", "get_feature_update", "add_feature_impact", "list_context_requests", "fulfill_context_request",
+            "publish_feature", "list_feature_updates", "get_feature_update", "add_feature_impact", "list_context_requests", "claim_context_request", "fulfill_context_request",
             "report_tech_debt", "list_tech_debt", "get_tech_debt", "update_tech_debt",
         }
 def test_agent_proxy_context_flow(tmp_path) -> None:
@@ -284,6 +284,55 @@ def test_tech_debt_crud_and_filters(tmp_path) -> None:
             assert resolved.json()["resolved_at"] is not None
             assert client.delete(f"/api/tech-debt/{debt_id}").status_code == 200
             assert client.get("/api/tech-debt").json() == []
+    finally:
+        main.app.dependency_overrides.clear()
+        test_engine.dispose()
+
+
+def test_claim_and_wrong_project_rejected(tmp_path) -> None:
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'claim.sqlite3'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(test_engine)
+    session_factory = sessionmaker(bind=test_engine)
+
+    def test_db():
+        with session_factory() as session:
+            yield session
+
+    main.app.dependency_overrides[main.get_db] = test_db
+    try:
+        with TestClient(main.app) as client:
+            created = client.post("/api/updates", json={
+                "title": "Claim test", "summary": "A feature for claim flow.",
+                "repo_url": "https://github.com/example/repo", "why": "Owners need routing.",
+                "how_it_works": "Watcher claims then fulfills.",
+                "impact": "No wrong-project excerpts.",
+            })
+            assert created.status_code == 201, created.text
+            update_id = created.json()["id"]
+            req = client.post(f"/api/updates/{update_id}/context-requests", json={"question": "Where is x?"})
+            assert req.status_code == 201, req.text
+            rid = req.json()["id"]
+            claimed = client.post(f"/api/context-requests/{rid}/claim", json={"agent": "opencode"})
+            assert claimed.status_code == 200, claimed.text
+            assert claimed.json()["status"] == "claimed"
+            assert claimed.json()["claimed_by"] == "opencode"
+            again = client.post(f"/api/context-requests/{rid}/claim", json={"agent": "other"})
+            assert again.json()["status"] == "claimed"
+            assert again.json()["claimed_by"] == "opencode"
+            bad = client.post(f"/api/context-requests/{rid}/fulfill", json={
+                "excerpts": [{"path": "a.ts", "content": "x", "start_line": 1, "end_line": 2}],
+                "repo_url": "https://github.com/other/wrong",
+            })
+            assert bad.status_code == 409, bad.text
+            good = client.post(f"/api/context-requests/{rid}/fulfill", json={
+                "excerpts": [{"path": "a.ts", "content": "x", "start_line": 1, "end_line": 2}],
+                "repo_url": "https://github.com/example/repo.git",
+                "branch": "main",
+                "commit_sha": "abc123",
+            })
+            assert good.status_code == 200, good.text
+            assert good.json()["status"] == "fulfilled"
+            assert good.json()["source_branch"] == "main"
     finally:
         main.app.dependency_overrides.clear()
         test_engine.dispose()

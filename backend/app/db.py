@@ -40,6 +40,7 @@ class Update(Base):
     questions: Mapped[list["Question"]] = relationship(back_populates="update", cascade="all, delete-orphan", order_by="Question.created_at")
     impact_notes: Mapped[list["ImpactNote"]] = relationship(back_populates="update", cascade="all, delete-orphan", order_by="ImpactNote.created_at")
     code_context: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, default=None)
     context_requests: Mapped[list["ContextRequest"]] = relationship(back_populates="update", cascade="all, delete-orphan", order_by="ContextRequest.created_at")
 
 
@@ -96,6 +97,11 @@ class ContextRequest(Base):
     question: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     excerpts: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    source_repo_url: Mapped[str | None] = mapped_column(String(600), nullable=True, default=None)
+    source_branch: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    source_commit: Mapped[str | None] = mapped_column(String(80), nullable=True, default=None)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    claimed_by: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     fulfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     update: Mapped[Update] = relationship(back_populates="context_requests")
