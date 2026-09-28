@@ -263,6 +263,7 @@ body:has(.mk-page) { background: #F7F7F2; }
 .mk-hscroll { overflow-x: auto; border-radius: 16px; }
 /* responsive */
 @media (max-width: 1024px) {
+  .mk-nav-right .mk-gh-link span { display: none; }
   .mk-how-grid { grid-template-columns: 1fr; } .mk-pipeline { position: relative; top: 0; }
   .mk-dark-grid, .mk-origin-grid, .mk-open-grid { grid-template-columns: 1fr; }
   .mk-two-col { grid-template-columns: 1fr; }
@@ -270,7 +271,7 @@ body:has(.mk-page) { background: #F7F7F2; }
 }
 @media (max-width: 768px) {
   .mk-nav-links { display: none; } .mk-menu-btn { display: inline-flex; }
-  .mk-nav-right .mk-gh-link span { display: none; }
+  .mk-login-btn { display: none; }
   .mk-feat-row { grid-template-columns: 1fr; } .mk-feat-row.flip > :first-child { order: 0; }
   .mk-callouts { grid-template-columns: 1fr; } .mk-callouts div { border-left: 0; border-top: 1px solid var(--mk-hairline); } .mk-callouts div:first-child { border-top: 0; }
   .mk-points { grid-template-columns: 1fr; } .mk-points div { border-left: 0; border-top: 1px solid var(--mk-hairline); } .mk-points div:first-child { border-top: 0; }

@@ -103,9 +103,10 @@ function Nav() {
           <a href="#open-source">Open source</a>
         </nav>
         <div className="mk-nav-right">
-          <a className="mk-gh-link" href={LINKS.github} target="_blank" rel="noreferrer">
+          <a className="mk-gh-link" href={LINKS.github} target="_blank" rel="noreferrer" aria-label="Updater on GitHub">
             <Github size={18} aria-hidden="true" /><span>GitHub</span>
           </a>
+          <a className="mk-btn mk-btn-ghost mk-login-btn" href={LINKS.app}>Log in</a>
           <a className="mk-btn mk-btn-primary" href="#connect">Connect an agent</a>
           <button className="mk-menu-btn" type="button" aria-expanded={open} aria-label={open ? "Close menu" : "Open menu"} onClick={() => setOpen((v) => !v)}>
             {open ? <X size={20} /> : <Menu size={20} />}
@@ -119,7 +120,7 @@ function Nav() {
             <a href="#how" onClick={() => setOpen(false)}>How it works</a>
             <a href="#features" onClick={() => setOpen(false)}>Features</a>
             <a href="#open-source" onClick={() => setOpen(false)}>Open source</a>
-            <a href={LINKS.app} onClick={() => setOpen(false)}>Open workspace →</a>
+            <a href={LINKS.app} onClick={() => setOpen(false)}>Log in →</a>
           </nav>
         )}
       </div>
