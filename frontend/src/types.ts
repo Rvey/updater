@@ -39,11 +39,38 @@ export type NoteColor =
   | "purple"
   | "pink";
 
+export type NoteCategory =
+  | "todo"
+  | "bug"
+  | "idea"
+  | "investigation"
+  | "implementation"
+  | "command"
+  | "decision"
+  | "follow-up"
+  | "general";
+
+export type NoteStatus = "open" | "in-progress" | "done" | "archived";
+
+export type NotePriority = "none" | "low" | "medium" | "high";
+
 export type Note = {
   id: string;
   title: string;
   content: string;
   color: NoteColor;
+  category: NoteCategory;
+  status: NoteStatus;
+  priority: NotePriority;
+  tags: string[];
+  repository: string | null;
+  branch: string | null;
+  file_path: string | null;
+  commit_hash: string | null;
+  related_url: string | null;
+  due_date: string | null;
+  pinned: boolean;
+  archived: boolean;
   created_at: string;
   updated_at: string;
 };

@@ -196,3 +196,42 @@ def test_republish_merges_commits_under_one_feature(tmp_path) -> None:
     finally:
         main.app.dependency_overrides.clear()
         test_engine.dispose()
+
+
+def test_notes_ticket_fields(tmp_path) -> None:
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'notes.sqlite3'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(test_engine)
+    session_factory = sessionmaker(bind=test_engine)
+
+    def test_db() -> Generator[Session, None, None]:
+        with session_factory() as session:
+            yield session
+
+    main.app.dependency_overrides[main.get_db] = test_db
+    try:
+        with TestClient(main.app) as client:
+            created = client.post("/api/notes", json={
+                "title": "Fix retry", "content": "Retry duplicates tool calls",
+                "category": "bug", "status": "open", "priority": "high",
+                "tags": ["backend"], "repository": "ai-voice-agent",
+                "branch": "fix/x", "pinned": True,
+            })
+            assert created.status_code == 201, created.text
+            body = created.json()
+            assert body["category"] == "bug"
+            assert body["priority"] == "high"
+            assert body["pinned"] is True
+            assert client.post("/api/notes", json={"title": "x", "category": "nope"}).status_code == 422
+            note_id = body["id"]
+            patched = client.patch(f"/api/notes/{note_id}", json={"status": "done", "tags": ["backend", "fix"]})
+            assert patched.status_code == 200, patched.text
+            assert patched.json()["status"] == "done"
+            assert patched.json()["tags"] == ["backend", "fix"]
+            listed = client.get("/api/notes")
+            assert listed.status_code == 200
+            assert listed.json()[0]["id"] == note_id
+            assert client.delete(f"/api/notes/{note_id}").status_code == 200
+            assert client.get("/api/notes").json() == []
+    finally:
+        main.app.dependency_overrides.clear()
+        test_engine.dispose()

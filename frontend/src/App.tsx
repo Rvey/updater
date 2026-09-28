@@ -25,17 +25,16 @@ import {
   Menu,
   MessageCircle,
   Moon,
-  Pencil,
   Plus,
   Search,
   Settings2,
   Sparkles,
   StickyNote,
   Sun,
-  Trash2,
   X,
 } from "lucide-react";
-import type { ImpactNote, NewUpdate, Note, NoteColor, Question, Update } from "./types";
+import type { ImpactNote, NewUpdate, Question, Update } from "./types";
+import { NotesView } from "./notes";
 import { Button } from "./components/ui/button";
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || "";
@@ -500,302 +499,6 @@ function NewModal({
     </div>
   );
 }
-
-const NOTE_COLORS: { value: NoteColor; label: string; swatch: string }[] = [
-  { value: "default", label: "Default", swatch: "#ececea" },
-  { value: "red", label: "Red", swatch: "#f3c1c1" },
-  { value: "orange", label: "Orange", swatch: "#f2cf9f" },
-  { value: "yellow", label: "Yellow", swatch: "#f7e584" },
-  { value: "green", label: "Green", swatch: "#b9e2b9" },
-  { value: "blue", label: "Blue", swatch: "#b9cff2" },
-  { value: "purple", label: "Purple", swatch: "#d3c2f2" },
-  { value: "pink", label: "Pink", swatch: "#f2bcd6" },
-];
-
-function NotesView({ token }: { token: string }) {
-  const [notes, setNotes] = useState<Note[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
-  const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
-  const [color, setColor] = useState<NoteColor>("default");
-  const [creating, setCreating] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [editContent, setEditContent] = useState("");
-  const [editColor, setEditColor] = useState<NoteColor>("default");
-  const [savingEdit, setSavingEdit] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    request<Note[]>("/notes", token)
-      .then((items) => {
-        if (cancelled) return;
-        setNotes(items);
-        setError("");
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Unable to load notes");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
-
-  const create = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!title.trim() || creating) return;
-    setCreating(true);
-    setError("");
-    try {
-      const note = await request<Note>("/notes", token, {
-        method: "POST",
-        body: JSON.stringify({ title: title.trim(), content: content.trim(), color }),
-      });
-      setNotes((current) => [note].concat(current));
-      setTitle("");
-      setContent("");
-      setColor("default");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to save note");
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const startEdit = (note: Note) => {
-    setEditingId(note.id);
-    setEditTitle(note.title);
-    setEditContent(note.content);
-    setEditColor(note.color);
-  };
-
-  const saveEdit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!editingId || !editTitle.trim() || savingEdit) return;
-    setSavingEdit(true);
-    setError("");
-    try {
-      const updated = await request<Note>("/notes/" + editingId, token, {
-        method: "PATCH",
-        body: JSON.stringify({ title: editTitle.trim(), content: editContent.trim(), color: editColor }),
-      });
-      setNotes((current) => current.map((item) => (item.id === editingId ? updated : item)));
-      setEditingId(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to update note");
-    } finally {
-      setSavingEdit(false);
-    }
-  };
-
-  const recolor = async (note: Note, next: NoteColor) => {
-    if (note.color === next || busyId) return;
-    setBusyId(note.id);
-    setError("");
-    try {
-      const updated = await request<Note>("/notes/" + note.id, token, {
-        method: "PATCH",
-        body: JSON.stringify({ color: next }),
-      });
-      setNotes((current) => current.map((item) => (item.id === note.id ? updated : item)));
-      if (editingId === note.id) setEditColor(next);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to update note color");
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const remove = async (id: string) => {
-    setBusyId(id);
-    setError("");
-    try {
-      await request<{ ok: boolean }>("/notes/" + id, token, { method: "DELETE" });
-      setNotes((current) => current.filter((item) => item.id !== id));
-      if (editingId === id) setEditingId(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to delete note");
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const query = search.toLowerCase().trim();
-  const filtered = query
-    ? notes.filter((item) => (item.title + " " + item.content).toLowerCase().indexOf(query) !== -1)
-    : notes;
-
-  return (
-    <div className="notes-panel">
-      <div className="feed-heading">
-        <div>
-          <div className="feed-eyebrow">
-            <span className="eyebrow-line" /> QUICK NOTES
-          </div>
-          <h2>Notes</h2>
-          <p>Scratch space for follow-ups, reminders, and ideas. Each note keeps its own color.</p>
-        </div>
-      </div>
-      <form className="note-composer" onSubmit={create}>
-        <input
-          aria-label="Note title"
-          placeholder="Note title…"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          maxLength={180}
-        />
-        <textarea
-          aria-label="Note content"
-          placeholder="Write the note…"
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          rows={3}
-          maxLength={10000}
-        />
-        <div className="note-composer-row">
-          <div className="note-swatches" role="radiogroup" aria-label="Note color">
-            {NOTE_COLORS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                role="radio"
-                aria-checked={color === option.value}
-                aria-label={option.label}
-                title={option.label}
-                className={color === option.value ? "note-swatch active" : "note-swatch"}
-                style={{ background: option.swatch }}
-                onClick={() => setColor(option.value)}
-              />
-            ))}
-          </div>
-          <Button type="submit" className="button primary" disabled={creating || !title.trim()}>
-            <Plus size={16} /> {creating ? "Saving…" : "Add note"}
-          </Button>
-        </div>
-      </form>
-      <div className="feed-toolbar">
-        <label className="search-box">
-          <Search size={17} />
-          <input
-            placeholder="Search notes..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="Search notes"
-          />
-        </label>
-      </div>
-      {loading ? (
-        <div className="loading-list">Loading your notes…</div>
-      ) : error && notes.length === 0 ? (
-        <div className="list-error">
-          <CircleHelp size={20} />
-          <strong>Could not load notes</strong>
-          <p>{error}</p>
-        </div>
-      ) : filtered.length ? (
-        <div className="notes-grid">
-          {filtered.map((note) => (
-            <article key={note.id} className="note-card" data-color={note.color}>
-              {editingId === note.id ? (
-                <form className="note-edit" onSubmit={saveEdit}>
-                  <input
-                    aria-label="Edit note title"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    maxLength={180}
-                  />
-                  <textarea
-                    aria-label="Edit note content"
-                    value={editContent}
-                    onChange={(e) => setEditContent(e.target.value)}
-                    rows={4}
-                    maxLength={10000}
-                  />
-                  <div className="note-swatches small" role="radiogroup" aria-label="Note color">
-                    {NOTE_COLORS.map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        role="radio"
-                        aria-checked={editColor === option.value}
-                        aria-label={option.label}
-                        title={option.label}
-                        className={editColor === option.value ? "note-swatch active" : "note-swatch"}
-                        style={{ background: option.swatch }}
-                        onClick={() => setEditColor(option.value)}
-                      />
-                    ))}
-                  </div>
-                  <div className="note-actions">
-                    <button type="button" className="button subtle" onClick={() => setEditingId(null)}>
-                      Cancel
-                    </button>
-                    <Button type="submit" className="button primary" disabled={savingEdit || !editTitle.trim()}>
-                      {savingEdit ? "Saving…" : "Save"}
-                    </Button>
-                  </div>
-                </form>
-              ) : (
-                <div>
-                  <h3>{note.title}</h3>
-                  {note.content ? <p className="note-content">{note.content}</p> : null}
-                  <span className="note-date">{dateLabel(note.updated_at)}</span>
-                  <div className="note-card-foot">
-                    <div className="note-swatches small" aria-label="Change note color">
-                      {NOTE_COLORS.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          aria-label={"Set color " + option.label}
-                          title={option.label}
-                          className={note.color === option.value ? "note-swatch active" : "note-swatch"}
-                          style={{ background: option.swatch }}
-                          disabled={busyId === note.id}
-                          onClick={() => recolor(note, option.value)}
-                        />
-                      ))}
-                    </div>
-                    <div className="note-icon-actions">
-                      <button aria-label="Edit note" onClick={() => startEdit(note)}>
-                        <Pencil size={14} />
-                      </button>
-                      <button aria-label="Delete note" disabled={busyId === note.id} onClick={() => remove(note.id)}>
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </article>
-          ))}
-        </div>
-      ) : notes.length === 0 ? (
-        <div className="no-matches">
-          <StickyNote size={24} />
-          <h3>No notes yet</h3>
-          <p>Capture your first note above — pick a color to keep it recognizable.</p>
-        </div>
-      ) : (
-        <div className="no-matches">
-          <Search size={24} />
-          <h3>No matching notes</h3>
-          <p>Try a different search.</p>
-          <button onClick={() => setSearch("")}>Clear search</button>
-        </div>
-      )}
-      {error && notes.length > 0 && <div className="form-error">{error}</div>}
-    </div>
-  );
-}
-
 function UpdateDetail({
   update,
   token,
@@ -820,15 +523,34 @@ function UpdateDetail({
   const [contextSent, setContextSent] = useState(false);
   const [threadOpen, setThreadOpen] = useState(false);
   const [composerOpen, setComposerOpen] = useState(true);
+ useEffect(() => {
+   setThreadOpen(false);
+   setComposerOpen(true);
+   setQuestion("");
+   setError("");
+   setContextSent(false);
+   setContextError("");
+ }, [update.id]);
+ const pendingRequests = (update.context_requests ?? []).filter((item) => item.status === "pending");
+  const fulfilledRequests = (update.context_requests ?? []).filter((item) => item.status === "fulfilled");
   useEffect(() => {
-    setThreadOpen(false);
-    setComposerOpen(true);
-    setQuestion("");
-    setError("");
-    setContextSent(false);
-    setContextError("");
-  }, [update.id]);
-  const pendingRequests = (update.context_requests ?? []).filter((item) => item.status === "pending");
+    if (pendingRequests.length === 0) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const refreshed = await request<Update>(`/updates/${update.id}`, token);
+        if (!cancelled) onRefresh(refreshed);
+      } catch {
+        // Keep showing the pending state; a failed poll is not a request error.
+      }
+    };
+    const timer = window.setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [update.id, pendingRequests.length, token]);
   const askAgent = async () => {
     if (requestingContext) return;
     setRequestingContext(true);
@@ -1131,10 +853,10 @@ function UpdateDetail({
                   {requestingContext ? "Asking your agent…" : "Ask my agent for code context"}
                 </button>
                 <p>
-                  Pings the connected agent (opencode, Codex, Claude Code) running in this repo. It reads the local files and sends back only the excerpts needed.
+                  Saves a request to this update. Then, in your agent running from this repo checkout, ask it to check Updater — it reads the local files and sends back only the needed excerpts. This page auto-refreshes every 5s while a request is pending.
                 </p>
-                {contextSent && pendingRequests.length === 0 && (
-                  <p className="proxy-note">Request sent — run `list_context_requests` in your agent, then fulfill it. New excerpts appear above.</p>
+                {contextSent && pendingRequests.length === 0 && fulfilledRequests.length === 0 && (
+                  <p className="proxy-note">Request sent — in your agent run /updater-check or call list_context_requests, then fulfill it. New excerpts appear under Code from your agent.</p>
                 )}
                 {pendingRequests.length > 0 && (
                   <div className="proxy-pending">
@@ -1142,7 +864,11 @@ function UpdateDetail({
                     {pendingRequests.map((item) => (
                       <p key={item.id}>“{item.question}”</p>
                     ))}
+                    <p className="proxy-note">In your agent checkout run: /updater-check — or MCP list_context_requests then fulfill_context_request. Keep this page open; it will refresh automatically.</p>
                   </div>
+                )}
+                {fulfilledRequests.length > 0 && pendingRequests.length === 0 && (
+                  <p className="proxy-note">Agent replied — see Code from your agent above, then ask again for a code-grounded answer.</p>
                 )}
                 {contextError && <div className="form-error">{contextError}</div>}
               </div>
@@ -1726,7 +1452,7 @@ export default function App() {
         </header>
         <div className="workspace-body">
           {view === "notes" ? (
-            <NotesView token={token} />
+            <NotesView token={token} repos={repositories} />
           ) : (
             <>
           <section className="feed-panel">

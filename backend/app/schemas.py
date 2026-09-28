@@ -58,17 +58,45 @@ class ImpactNoteRead(BaseModel):
 
 NOTE_COLORS = ("default", "red", "orange", "yellow", "green", "blue", "purple", "pink")
 
+NOTE_CATEGORIES = ("todo", "bug", "idea", "investigation", "implementation", "command", "decision", "follow-up", "general")
+NOTE_STATUSES = ("open", "in-progress", "done", "archived")
+NOTE_PRIORITIES = ("none", "low", "medium", "high")
+
 
 class NoteCreate(BaseModel):
     title: str = Field(min_length=1, max_length=180)
     content: str = Field(default="", max_length=10000)
     color: str = Field(default="default", max_length=20)
+    category: str = Field(default="general", max_length=30)
+    status: str = Field(default="open", max_length=20)
+    priority: str = Field(default="none", max_length=20)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    repository: str | None = Field(default=None, max_length=300)
+    branch: str | None = Field(default=None, max_length=255)
+    file_path: str | None = Field(default=None, max_length=600)
+    commit_hash: str | None = Field(default=None, max_length=80)
+    related_url: str | None = Field(default=None, max_length=600)
+    due_date: datetime | None = None
+    pinned: bool = False
+    archived: bool = False
 
 
 class NoteUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=180)
     content: str | None = Field(default=None, max_length=10000)
     color: str | None = Field(default=None, max_length=20)
+    category: str | None = Field(default=None, max_length=30)
+    status: str | None = Field(default=None, max_length=20)
+    priority: str | None = Field(default=None, max_length=20)
+    tags: list[str] | None = Field(default=None, max_length=20)
+    repository: str | None = Field(default=None, max_length=300)
+    branch: str | None = Field(default=None, max_length=255)
+    file_path: str | None = Field(default=None, max_length=600)
+    commit_hash: str | None = Field(default=None, max_length=80)
+    related_url: str | None = Field(default=None, max_length=600)
+    due_date: datetime | None = None
+    pinned: bool | None = None
+    archived: bool | None = None
 
 
 class NoteRead(BaseModel):
@@ -78,6 +106,18 @@ class NoteRead(BaseModel):
     title: str
     content: str
     color: str
+    category: str = "general"
+    status: str = "open"
+    priority: str = "none"
+    tags: list[str] = Field(default_factory=list)
+    repository: str | None = None
+    branch: str | None = None
+    file_path: str | None = None
+    commit_hash: str | None = None
+    related_url: str | None = None
+    due_date: datetime | None = None
+    pinned: bool = False
+    archived: bool = False
     created_at: datetime
     updated_at: datetime
 

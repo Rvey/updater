@@ -9,7 +9,7 @@ from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from .config import get_settings
 from . import auth as auth_utils
@@ -22,7 +22,10 @@ from .schemas import (
     ContextRequestRead,
     ImpactNoteCreate,
     ImpactNoteRead,
+    NOTE_CATEGORIES,
     NOTE_COLORS,
+    NOTE_PRIORITIES,
+    NOTE_STATUSES,
     NoteCreate,
     NoteRead,
     NoteUpdate,
@@ -50,6 +53,7 @@ async def lifespan(_: FastAPI):
                 "UPDATER_TOKEN is required when using PostgreSQL until a user account is registered"
             )
     _ensure_code_context_columns()
+    _ensure_note_columns()
     mcp_app = create_mcp_server().streamable_http_app()
     mcp_mount.app = mcp_app
     try:
@@ -151,6 +155,16 @@ def _user_for_bearer(db: Session, authorization: str | None):
     return None
 
 
+def _normalize_repo_url(value):
+    cleaned = (value or '').strip().rstrip('/')
+    if cleaned.lower().endswith('.git'):
+        cleaned = cleaned[:-4].rstrip('/')
+    if cleaned.startswith('git@') and ':' in cleaned:
+        host, _, path = cleaned[4:].partition(':')
+        cleaned = 'https://' + host + '/' + path
+    return cleaned.lower()
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -171,9 +185,11 @@ def list_updates(
     if q.strip():
         term = f"%{q.strip()}%"
         query = query.where(or_(Update.title.ilike(term), Update.summary.ilike(term), Update.why.ilike(term), Update.how_it_works.ilike(term)))
+    items = list(db.scalars(query).all())
     if repo.strip():
-        query = query.where(Update.repo_url == repo.strip())
-    return list(db.scalars(query).all())
+        wanted = _normalize_repo_url(repo)
+        items = [u for u in items if _normalize_repo_url(u.repo_url) == wanted]
+    return items
 
 
 def _merge_republish(existing: Update, payload: UpdateCreate, db: Session) -> Update:
@@ -281,17 +297,129 @@ def _normalize_note_color(value: str | None) -> str:
     return color
 
 
+def _normalize_note_category(value: str | None) -> str:
+    category = (value or "general").strip().lower()
+    if category not in NOTE_CATEGORIES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid category. Choose one of: {', '.join(NOTE_CATEGORIES)}",
+        )
+    return category
+
+
+def _normalize_note_status(value: str | None) -> str:
+    normalized = (value or "open").strip().lower().replace("_", "-")
+    if normalized not in NOTE_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid status. Choose one of: {', '.join(NOTE_STATUSES)}",
+        )
+    return normalized
+
+
+def _normalize_note_priority(value: str | None) -> str:
+    priority = (value or "none").strip().lower()
+    if priority not in NOTE_PRIORITIES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid priority. Choose one of: {', '.join(NOTE_PRIORITIES)}",
+        )
+    return priority
+
+
+def _normalize_note_tags(value: list[str] | None) -> list[str]:
+    if value is None:
+        return []
+    cleaned: list[str] = []
+    for item in value:
+        tag = str(item or "").strip().lower().replace(" ", "-")[:40]
+        if tag and tag not in cleaned:
+            cleaned.append(tag)
+        if len(cleaned) >= 20:
+            break
+    return cleaned
+
+
+def _clean_optional_str(value: str | None, max_len: int) -> str | None:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    if not text_value:
+        return None
+    return text_value[:max_len]
+
+
+def _ensure_note_columns() -> None:
+    from sqlalchemy import inspect, text
+
+    try:
+        existing = {column["name"] for column in inspect(engine).get_columns("notes")}
+    except Exception:
+        return
+    # (column_name, ddl_type) pairs — kept generic for SQLite + PostgreSQL.
+    wanted: list[tuple[str, str]] = [
+        ("category", "VARCHAR(30)"),
+        ("status", "VARCHAR(20)"),
+        ("priority", "VARCHAR(20)"),
+        ("tags", "JSON"),
+        ("repository", "VARCHAR(300)"),
+        ("branch", "VARCHAR(255)"),
+        ("file_path", "VARCHAR(600)"),
+        ("commit_hash", "VARCHAR(80)"),
+        ("related_url", "VARCHAR(600)"),
+        ("due_date", "TIMESTAMP"),
+        ("pinned", "BOOLEAN"),
+        ("archived", "BOOLEAN"),
+    ]
+    defaults: dict[str, str] = {
+        "category": "'general'",
+        "status": "'open'",
+        "priority": "'none'",
+        "tags": "'[]'",
+        "pinned": "0",
+        "archived": "0",
+    }
+    with engine.begin() as connection:
+        for name, ddl in wanted:
+            if name not in existing:
+                connection.execute(text(f"ALTER TABLE notes ADD COLUMN {name} {ddl}"))
+        for name, default in defaults.items():
+            if name not in existing:
+                if name == "tags":
+                    connection.execute(text("UPDATE notes SET tags = '[]' WHERE tags IS NULL"))
+                else:
+                    connection.execute(text(f"UPDATE notes SET {name} = {default} WHERE {name} IS NULL"))
+
+
 @app.get("/api/notes", response_model=list[NoteRead], dependencies=[Depends(require_token)])
 def list_notes(db: Session = Depends(get_db)) -> list[Note]:
-    return list(db.scalars(select(Note).order_by(Note.updated_at.desc(), Note.created_at.desc())).all())
+    _ensure_note_columns()
+    return list(
+        db.scalars(
+            select(Note).order_by(Note.pinned.desc(), Note.updated_at.desc(), Note.created_at.desc())
+        ).all()
+    )
 
 
 @app.post("/api/notes", response_model=NoteRead, status_code=201, dependencies=[Depends(require_token)])
 def create_note(payload: NoteCreate, db: Session = Depends(get_db)) -> Note:
+    _ensure_note_columns()
     entry = Note(
         title=payload.title.strip(),
         content=(payload.content or "").strip(),
         color=_normalize_note_color(payload.color),
+        category=_normalize_note_category(payload.category),
+        status=_normalize_note_status(payload.status),
+        priority=_normalize_note_priority(payload.priority),
+        tags=_normalize_note_tags(payload.tags),
+        repository=_clean_optional_str(payload.repository, 300),
+        branch=_clean_optional_str(payload.branch, 255),
+        file_path=_clean_optional_str(payload.file_path, 600),
+        commit_hash=_clean_optional_str(payload.commit_hash, 80),
+        related_url=_clean_optional_str(payload.related_url, 600),
+        due_date=payload.due_date,
+        pinned=bool(payload.pinned),
+        archived=bool(payload.archived) or _normalize_note_status(payload.status) == "archived",
     )
     db.add(entry)
     db.commit()
@@ -301,6 +429,7 @@ def create_note(payload: NoteCreate, db: Session = Depends(get_db)) -> Note:
 
 @app.patch("/api/notes/{note_id}", response_model=NoteRead, dependencies=[Depends(require_token)])
 def update_note(note_id: str, payload: NoteUpdate, db: Session = Depends(get_db)) -> Note:
+    _ensure_note_columns()
     entry = db.get(Note, note_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Note not found")
@@ -310,6 +439,39 @@ def update_note(note_id: str, payload: NoteUpdate, db: Session = Depends(get_db)
         entry.content = (payload.content or "").strip()
     if payload.color is not None:
         entry.color = _normalize_note_color(payload.color)
+    if payload.category is not None:
+        entry.category = _normalize_note_category(payload.category)
+    if payload.status is not None:
+        entry.status = _normalize_note_status(payload.status)
+        if entry.status == "archived":
+            entry.archived = True
+    if payload.priority is not None:
+        entry.priority = _normalize_note_priority(payload.priority)
+    if payload.tags is not None:
+        entry.tags = _normalize_note_tags(payload.tags)
+    # Optional string fields: None clears, empty string clears, value sets.
+    # NoteUpdate uses None as "not provided" default, so clearing is done
+    # by sending an empty string from the client.
+    for field_name, max_len in (
+        ("repository", 300),
+        ("branch", 255),
+        ("file_path", 600),
+        ("commit_hash", 80),
+        ("related_url", 600),
+    ):
+        value = getattr(payload, field_name)
+        # Pydantic keeps the raw value; interpret empty string as clear.
+        if value is not None:
+            raw = str(value).strip()
+            setattr(entry, field_name, raw[:max_len] if raw else None)
+    if "due_date" in getattr(payload, "model_fields_set", set()):
+        entry.due_date = payload.due_date
+    if payload.pinned is not None:
+        entry.pinned = bool(payload.pinned)
+    if payload.archived is not None:
+        entry.archived = bool(payload.archived)
+        if not entry.archived and entry.status == "archived":
+            entry.status = "open"
     entry.updated_at = now_utc()
     db.commit()
     db.refresh(entry)
@@ -343,12 +505,14 @@ def request_code_context(update_id: str, payload: ContextRequestCreate, db: Sess
 
 @app.get("/api/context-requests", response_model=list[ContextRequestRead], dependencies=[Depends(require_token)])
 def list_context_requests(status: str = Query(default="pending", max_length=20), repo: str = Query(default="", max_length=600), db: Session = Depends(get_db)) -> list[ContextRequest]:
-    query = select(ContextRequest).join(Update, ContextRequest.update_id == Update.id).order_by(ContextRequest.created_at.asc())
+    query = select(ContextRequest).join(Update, ContextRequest.update_id == Update.id).options(joinedload(ContextRequest.update)).order_by(ContextRequest.created_at.asc())
     if status.strip():
         query = query.where(ContextRequest.status == status.strip())
+    items = list(db.scalars(query).all())
     if repo.strip():
-        query = query.where(Update.repo_url == repo.strip())
-    return list(db.scalars(query).all())
+        wanted = _normalize_repo_url(repo)
+        items = [it for it in items if it.update is not None and _normalize_repo_url(it.update.repo_url) == wanted]
+    return items
 
 
 @app.post("/api/context-requests/{request_id}/fulfill", response_model=ContextRequestRead, dependencies=[Depends(require_token)])
