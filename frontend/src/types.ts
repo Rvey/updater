@@ -153,3 +153,51 @@ export type NewTechDebt = Pick<
   branch?: string;
   commit_sha?: string;
 };
+
+export type TaskStatus = "backlog" | "in-progress" | "review" | "done";
+
+export type TaskPriority = "low" | "medium" | "high";
+
+export type Task = {
+  id: string;
+  title: string;
+  description: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  position: number;
+  repo_url: string | null;
+  branch: string | null;
+  tags: string[];
+  assignee: string | null;
+  due_date: string | null;
+  author_agent: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+export type NewTask = Pick<Task, "title"> & {
+  description?: string;
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  repo_url?: string | null;
+  branch?: string | null;
+  tags?: string[];
+  assignee?: string | null;
+  due_date?: string | null;
+};
+
+export type TaskUpdate = Partial<
+  Pick<
+    Task,
+    | "title"
+    | "description"
+    | "status"
+    | "priority"
+    | "repo_url"
+    | "branch"
+    | "tags"
+    | "assignee"
+    | "due_date"
+  >
+>;

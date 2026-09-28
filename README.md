@@ -62,6 +62,7 @@ Run one CLI command and your agent can publish and read updates through MCP. No 
 - **Update detail** — why, how it works, impact, tradeoffs, learning notes, files, tags, branch, commit, PR.
 - **Impact over time** — add dated observations when you learn what a feature actually changed.
 - **Tech debt inbox** — run `/tech-depth` in your agent checkout to scan for tech debt and rushed decisions; each finding lands in the app with scope, description, mitigation, urgency, impact, and what is covered today.
+- **Kanban task board** — plan follow-up work on a drag-and-drop board (Backlog, In Progress, Review, Done). Create and edit tasks with priority, repo, branch, assignee, due date, and tags; every move is persisted, and the task view keeps status changes, edits, and deletes in one place.
 - **Quick notes** — scratch space with per-note colors for follow-ups, reminders, and ideas.
 - **Q&A per update** — ask questions inside the update; answers stay attached to the decision.
 - **Manual add** — capture an update from the UI when no agent was involved.
@@ -200,6 +201,12 @@ curl -f https://updaterapi.blitzgo.io/api/health
 | GET | `/api/tech-debt/{id}` | Fetch one tech-debt item |
 | PATCH | `/api/tech-debt/{id}` | Update status, urgency, mitigation, current state |
 | DELETE | `/api/tech-debt/{id}` | Delete a tech-debt item |
+| GET | `/api/tasks?q=&repo=&status=&priority=` | List tasks in board order |
+| POST | `/api/tasks` | Create a task |
+| GET | `/api/tasks/{id}` | Fetch one task |
+| PATCH | `/api/tasks/{id}` | Update a task, move it between columns |
+| POST | `/api/tasks/reorder` | Persist drag-and-drop board order (task ids per column) |
+| DELETE | `/api/tasks/{id}` | Delete a task |
 | POST | `/mcp` | MCP tools: `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact`, `list_context_requests`, `fulfill_context_request`, `report_tech_debt`, `list_tech_debt`, `get_tech_debt`, `update_tech_debt` |
 | POST | `/api/auth/register` | Create an account (first login session returned) |
 | POST | `/api/auth/login` | Sign in (login session returned) |

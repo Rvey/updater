@@ -125,6 +125,60 @@ class NoteRead(BaseModel):
     updated_at: datetime
 
 
+TASK_STATUSES = ("backlog", "in-progress", "review", "done")
+TASK_PRIORITIES = ("low", "medium", "high")
+
+
+class TaskCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=180)
+    description: str = Field(default="", max_length=8000)
+    status: str = Field(default="backlog", max_length=20)
+    priority: str = Field(default="medium", max_length=20)
+    repo_url: HttpUrl | None = None
+    branch: str | None = Field(default=None, max_length=255)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    assignee: str | None = Field(default=None, max_length=120)
+    due_date: datetime | None = None
+    author_agent: str | None = Field(default=None, max_length=100)
+
+
+class TaskUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=180)
+    description: str | None = Field(default=None, max_length=8000)
+    status: str | None = Field(default=None, max_length=20)
+    priority: str | None = Field(default=None, max_length=20)
+    repo_url: HttpUrl | None = None
+    branch: str | None = Field(default=None, max_length=255)
+    tags: list[str] | None = Field(default=None, max_length=20)
+    assignee: str | None = Field(default=None, max_length=120)
+    due_date: datetime | None = None
+    author_agent: str | None = Field(default=None, max_length=100)
+
+
+class TaskRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    description: str
+    status: str
+    priority: str
+    position: int
+    repo_url: str | None
+    branch: str | None
+    tags: list[str] = Field(default_factory=list)
+    assignee: str | None
+    due_date: datetime | None
+    author_agent: str | None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+
+
+class TaskReorder(BaseModel):
+    columns: dict[str, list[str]]
+
+
 class ContextRequestCreate(BaseModel):
     question: str = Field(min_length=3, max_length=2000)
 

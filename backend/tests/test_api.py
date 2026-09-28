@@ -327,6 +327,93 @@ def test_tech_debt_crud_and_filters(tmp_path) -> None:
         test_engine.dispose()
 
 
+def test_tasks_board_crud_reorder_and_delete(tmp_path) -> None:
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'tasks.sqlite3'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(test_engine)
+    session_factory = sessionmaker(bind=test_engine)
+
+    def test_db() -> Generator[Session, None, None]:
+        with session_factory() as session:
+            yield session
+
+    main.app.dependency_overrides[main.get_db] = test_db
+    try:
+        with TestClient(main.app) as client:
+            first = client.post("/api/tasks", json={
+                "title": "Ship the kanban board",
+                "description": "Wire drag and drop to the API.",
+                "priority": "high",
+                "repo_url": "https://github.com/example/repo",
+                "tags": ["Frontend", "board"],
+                "assignee": "Rvey",
+                "due_date": "2026-10-01T00:00:00Z",
+            })
+            assert first.status_code == 201, first.text
+            body = first.json()
+            assert body["status"] == "backlog"
+            assert body["position"] == 0
+            assert body["tags"] == ["frontend", "board"]
+            assert body["completed_at"] is None
+            first_id = body["id"]
+
+            second = client.post("/api/tasks", json={"title": "Add task API", "status": "in-progress", "priority": "medium"})
+            assert second.status_code == 201, second.text
+            second_id = second.json()["id"]
+
+            third = client.post("/api/tasks", json={"title": "Review the board", "status": "in-progress"})
+            assert third.status_code == 201, third.text
+            third_id = third.json()["id"]
+            assert third.json()["position"] == 1
+
+            assert client.post("/api/tasks", json={"title": "Bad status", "status": "nope"}).status_code == 422
+            assert client.post("/api/tasks", json={"title": "Bad priority", "priority": "nope"}).status_code == 422
+
+            fetched = client.get(f"/api/tasks/{first_id}")
+            assert fetched.status_code == 200
+            assert fetched.json()["assignee"] == "Rvey"
+
+            board = client.post("/api/tasks/reorder", json={"columns": {
+                "backlog": [],
+                "in-progress": [first_id, second_id],
+                "review": [],
+                "done": [third_id],
+            }})
+            assert board.status_code == 200, board.text
+            by_id = {item["id"]: item for item in board.json()}
+            assert by_id[first_id]["status"] == "in-progress"
+            assert by_id[first_id]["position"] == 0
+            assert by_id[second_id]["position"] == 1
+            assert by_id[third_id]["status"] == "done"
+            assert by_id[third_id]["completed_at"] is not None
+
+            patched = client.patch(f"/api/tasks/{third_id}", json={"status": "review", "title": "Review the board v2"})
+            assert patched.status_code == 200, patched.text
+            assert patched.json()["status"] == "review"
+            assert patched.json()["completed_at"] is None
+            assert patched.json()["title"] == "Review the board v2"
+
+            cleared = client.patch(f"/api/tasks/{first_id}", json={"repo_url": None, "due_date": None})
+            assert cleared.status_code == 200, cleared.text
+            assert cleared.json()["repo_url"] is None
+            assert cleared.json()["due_date"] is None
+
+            assert [item["id"] for item in client.get("/api/tasks", params={"q": "kanban"}).json()] == [first_id]
+            assert client.get("/api/tasks", params={"priority": "high"}).json()[0]["id"] == first_id
+            assert client.get("/api/tasks", params={"repo": "https://github.com/example/repo"}).json() == []
+
+            assert client.delete(f"/api/tasks/{second_id}").status_code == 200
+            remaining = client.get("/api/tasks").json()
+            assert second_id not in {item["id"] for item in remaining}
+            in_progress = [item for item in remaining if item["status"] == "in-progress"]
+            assert [item["position"] for item in in_progress] == [0]
+
+            missing = client.post("/api/tasks/reorder", json={"columns": {"backlog": ["missing"]}})
+            assert missing.status_code == 404
+    finally:
+        main.app.dependency_overrides.clear()
+        test_engine.dispose()
+
+
 def test_claim_and_wrong_project_rejected(tmp_path) -> None:
     test_engine = create_engine(f"sqlite:///{tmp_path / 'claim.sqlite3'}", connect_args={"check_same_thread": False})
     Base.metadata.create_all(test_engine)

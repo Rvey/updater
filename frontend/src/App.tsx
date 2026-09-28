@@ -28,12 +28,14 @@ import {
   Search,
   Settings2,
   Sparkles,
+  SquareKanban,
   StickyNote,
   Sun,
   X,
 } from "lucide-react";
 import type { ImpactNote, NewUpdate, Question, Update } from "./types";
 import { NotesView } from "./notes";
+import { TasksView } from "./tasks";
 import { TechDebtView } from "./techdebt";
 import { SettingsView } from "./settings";
 import type { SettingsSection } from "./settings";
@@ -1048,7 +1050,7 @@ function WorkspaceApp() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [repo, setRepo] = useState("All updates");
-  const [view, setView] = useState<"updates" | "questions" | "notes" | "tech-debt" | "settings">("updates");
+  const [view, setView] = useState<"updates" | "questions" | "notes" | "tasks" | "tech-debt" | "settings">("updates");
   const [loading, setLoading] = useState(true);
   const [unauthorized, setUnauthorized] = useState(false);
   const [error, setError] = useState("");
@@ -1388,6 +1390,16 @@ function WorkspaceApp() {
             <StickyNote size={17} /> Notes
           </button>
           <button
+            className={view === "tasks" ? "active" : ""}
+            onClick={() => {
+              setView("tasks");
+              setMobileNav(false);
+              setMobileDetail(false);
+            }}
+          >
+            <SquareKanban size={17} /> Tasks
+          </button>
+          <button
             className={view === "tech-debt" ? "active" : ""}
             onClick={() => {
               setView("tech-debt");
@@ -1447,15 +1459,17 @@ function WorkspaceApp() {
             <strong>
               {view === "notes"
                 ? "Notes"
-                : view === "settings"
-                  ? "Settings"
-                  : view === "tech-debt"
-                    ? "Tech debt"
-                    : view === "questions"
-                      ? "Conversations"
-                      : repo === "All updates"
-                        ? "All updates"
-                        : repoName(repo)}
+                : view === "tasks"
+                  ? "Tasks"
+                  : view === "settings"
+                    ? "Settings"
+                    : view === "tech-debt"
+                      ? "Tech debt"
+                      : view === "questions"
+                        ? "Conversations"
+                        : repo === "All updates"
+                          ? "All updates"
+                          : repoName(repo)}
             </strong>
           </div>
           <div className="topbar-right">
@@ -1480,6 +1494,8 @@ function WorkspaceApp() {
         <div className="workspace-body">
           {view === "notes" ? (
             <NotesView token={token} repos={repositories} />
+          ) : view === "tasks" ? (
+            <TasksView token={token} repos={repositories} />
           ) : view === "tech-debt" ? (
             <TechDebtView token={token} repos={repositories} />
           ) : view === "settings" ? (

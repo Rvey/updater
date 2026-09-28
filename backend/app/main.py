@@ -7,13 +7,13 @@ from pathlib import Path
 
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from .config import get_settings
 from . import auth as auth_utils
-from .db import ApiKey, Base, ContextRequest, ImpactNote, Note, Question, SessionLocal, TechDebt, Update, User, UserSession, engine, get_db, now_utc
+from .db import ApiKey, Base, ContextRequest, ImpactNote, Note, Question, SessionLocal, Task, TechDebt, Update, User, UserSession, engine, get_db, now_utc
 from .explain import explain_question
 from .mcp_server import create_mcp_server
 from .schemas import (
@@ -31,6 +31,12 @@ from .schemas import (
     NoteRead,
     NoteUpdate,
     QuestionCreate,
+    TASK_PRIORITIES,
+    TASK_STATUSES,
+    TaskCreate,
+    TaskRead,
+    TaskReorder,
+    TaskUpdate,
     TECH_DEBT_STATUSES,
     TECH_DEBT_URGENCIES,
     TechDebtCreate,
@@ -540,6 +546,216 @@ def delete_note(note_id: str, db: Session = Depends(get_db)):
     if not entry:
         raise HTTPException(status_code=404, detail="Note not found")
     db.delete(entry)
+    db.commit()
+    return {"ok": True}
+
+
+def _normalize_task_status(value: str | None) -> str:
+    normalized = (value or "backlog").strip().lower().replace("_", "-")
+    if normalized not in TASK_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid status. Choose one of: {', '.join(TASK_STATUSES)}",
+        )
+    return normalized
+
+
+def _normalize_task_priority(value: str | None) -> str:
+    priority = (value or "medium").strip().lower()
+    if priority not in TASK_PRIORITIES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid priority. Choose one of: {', '.join(TASK_PRIORITIES)}",
+        )
+    return priority
+
+
+def _normalize_task_tags(value: list[str] | None) -> list[str]:
+    if value is None:
+        return []
+    cleaned: list[str] = []
+    for item in value:
+        tag = str(item or "").strip().lower().replace(" ", "-")[:40]
+        if tag and tag not in cleaned:
+            cleaned.append(tag)
+        if len(cleaned) >= 20:
+            break
+    return cleaned
+
+
+def _task_ordering():
+    return (Task.status.asc(), Task.position.asc(), Task.created_at.asc(), Task.id.asc())
+
+
+def _reindex_task_column(db: Session, status_value: str) -> None:
+    """Compact positions inside one board column after a move or delete."""
+    items = list(
+        db.scalars(
+            select(Task)
+            .where(Task.status == status_value)
+            .order_by(Task.position.asc(), Task.created_at.asc(), Task.id.asc())
+        ).all()
+    )
+    for index, item in enumerate(items):
+        item.position = index
+
+
+@app.get("/api/tasks", response_model=list[TaskRead], dependencies=[Depends(require_token)])
+def list_tasks(
+    q: str = Query(default="", max_length=200),
+    repo: str = Query(default="", max_length=600),
+    status: str = Query(default="", max_length=20),
+    priority: str = Query(default="", max_length=20),
+    db: Session = Depends(get_db),
+) -> list[Task]:
+    query = select(Task).order_by(*_task_ordering())
+    if status.strip():
+        query = query.where(Task.status == _normalize_task_status(status))
+    if priority.strip():
+        query = query.where(Task.priority == _normalize_task_priority(priority))
+    items = list(db.scalars(query).all())
+    if repo.strip():
+        wanted = _normalize_repo_url(repo)
+        items = [t for t in items if t.repo_url and _normalize_repo_url(t.repo_url) == wanted]
+    term = q.strip().lower()
+    if term:
+        items = [
+            t
+            for t in items
+            if term
+            in " ".join(
+                [
+                    t.title or "",
+                    t.description or "",
+                    t.assignee or "",
+                    t.branch or "",
+                    " ".join(t.tags or []),
+                ]
+            ).lower()
+        ]
+    return items
+
+
+@app.post("/api/tasks", response_model=TaskRead, status_code=201, dependencies=[Depends(require_token)])
+def create_task(payload: TaskCreate, db: Session = Depends(get_db)) -> Task:
+    status_value = _normalize_task_status(payload.status)
+    next_position = db.scalar(select(func.count()).select_from(Task).where(Task.status == status_value)) or 0
+    entry = Task(
+        title=payload.title.strip(),
+        description=(payload.description or "").strip(),
+        status=status_value,
+        priority=_normalize_task_priority(payload.priority),
+        position=int(next_position),
+        repo_url=str(payload.repo_url) if payload.repo_url else None,
+        branch=_clean_optional_str(payload.branch, 255),
+        tags=_normalize_task_tags(payload.tags),
+        assignee=_clean_optional_str(payload.assignee, 120),
+        due_date=payload.due_date,
+        author_agent=_clean_optional_str(payload.author_agent, 100),
+    )
+    if status_value == "done":
+        entry.completed_at = now_utc()
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+@app.get("/api/tasks/{task_id}", response_model=TaskRead, dependencies=[Depends(require_token)])
+def get_task(task_id: str, db: Session = Depends(get_db)) -> Task:
+    entry = db.get(Task, task_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return entry
+
+
+@app.patch("/api/tasks/{task_id}", response_model=TaskRead, dependencies=[Depends(require_token)])
+def update_task(task_id: str, payload: TaskUpdate, db: Session = Depends(get_db)) -> Task:
+    entry = db.get(Task, task_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if payload.title is not None:
+        entry.title = payload.title.strip()
+    if payload.description is not None:
+        entry.description = (payload.description or "").strip()
+    if payload.priority is not None:
+        entry.priority = _normalize_task_priority(payload.priority)
+    if payload.tags is not None:
+        entry.tags = _normalize_task_tags(payload.tags)
+    for field_name, max_len in (("branch", 255), ("assignee", 120), ("author_agent", 100)):
+        value = getattr(payload, field_name)
+        if value is not None:
+            raw = str(value).strip()
+            setattr(entry, field_name, raw[:max_len] if raw else None)
+    # Optional URL/date fields use None as "not provided"; use model_fields_set
+    # to tell an explicit null (clear) from an omitted field.
+    if "repo_url" in payload.model_fields_set:
+        entry.repo_url = str(payload.repo_url) if payload.repo_url else None
+    if "due_date" in payload.model_fields_set:
+        entry.due_date = payload.due_date
+    if payload.status is not None:
+        status_value = _normalize_task_status(payload.status)
+        if status_value != entry.status:
+            old_status = entry.status
+            next_position = db.scalar(select(func.count()).select_from(Task).where(Task.status == status_value)) or 0
+            entry.status = status_value
+            entry.position = int(next_position)
+            _reindex_task_column(db, old_status)
+        if status_value == "done":
+            entry.completed_at = entry.completed_at or now_utc()
+        else:
+            entry.completed_at = None
+    entry.updated_at = now_utc()
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+@app.post("/api/tasks/reorder", response_model=list[TaskRead], dependencies=[Depends(require_token)])
+def reorder_tasks(payload: TaskReorder, db: Session = Depends(get_db)) -> list[Task]:
+    """Persist a drag-and-drop board state: ordered task ids per column."""
+    if not payload.columns:
+        raise HTTPException(status_code=422, detail="Provide at least one column")
+    tasks = {task.id: task for task in db.scalars(select(Task)).all()}
+    seen: set[str] = set()
+    normalized: list[tuple[str, list[str]]] = []
+    for raw_status, ids in payload.columns.items():
+        status_value = _normalize_task_status(raw_status)
+        cleaned: list[str] = []
+        for task_id in ids:
+            if task_id not in tasks:
+                raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+            if task_id in seen:
+                raise HTTPException(status_code=422, detail=f"Task listed in more than one column: {task_id}")
+            seen.add(task_id)
+            cleaned.append(task_id)
+        normalized.append((status_value, cleaned))
+    now = now_utc()
+    for status_value, ids in normalized:
+        for index, task_id in enumerate(ids):
+            task = tasks[task_id]
+            task.status = status_value
+            task.position = index
+            task.updated_at = now
+            if status_value == "done":
+                task.completed_at = task.completed_at or now
+            else:
+                task.completed_at = None
+    for status_value in TASK_STATUSES:
+        _reindex_task_column(db, status_value)
+    db.commit()
+    return list(db.scalars(select(Task).order_by(*_task_ordering())).all())
+
+
+@app.delete("/api/tasks/{task_id}", dependencies=[Depends(require_token)])
+def delete_task(task_id: str, db: Session = Depends(get_db)):
+    entry = db.get(Task, task_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Task not found")
+    status_value = entry.status
+    db.delete(entry)
+    db.flush()
+    _reindex_task_column(db, status_value)
     db.commit()
     return {"ok": True}
 

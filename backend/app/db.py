@@ -89,6 +89,26 @@ class Note(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
 
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    title: Mapped[str] = mapped_column(String(180))
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(20), default="backlog")
+    priority: Mapped[str] = mapped_column(String(20), default="medium")
+    position: Mapped[int] = mapped_column(default=0)
+    repo_url: Mapped[str | None] = mapped_column(String(600), nullable=True, default=None)
+    branch: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    assignee: Mapped[str | None] = mapped_column(String(120), nullable=True, default=None)
+    due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    author_agent: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+
+
 class ContextRequest(Base):
     __tablename__ = "context_requests"
 
