@@ -90,6 +90,7 @@ export type Update = {
   commit_sha: string | null;
   pr_url: string | null;
   author_agent: string | null;
+  user_id?: string | null;
   why: string;
   how_it_works: string;
   impact: string;
@@ -113,4 +114,42 @@ export type NewUpdate = Pick<
   learning_notes?: string;
   files_changed?: string[];
   tags?: string[];
+};
+
+export type TechDebtUrgency = "low" | "medium" | "high" | "critical";
+
+export type TechDebtStatus = "open" | "in-progress" | "resolved" | "wont-fix";
+
+export type TechDebt = {
+  id: string;
+  title: string;
+  scope: string;
+  description: string;
+  impact: string;
+  mitigation: string;
+  current_state: string;
+  urgency: TechDebtUrgency;
+  status: TechDebtStatus;
+  repo_url: string;
+  file_path: string | null;
+  files: string[];
+  tags: string[];
+  branch: string | null;
+  commit_sha: string | null;
+  author_agent: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+};
+
+export type NewTechDebt = Pick<
+  TechDebt,
+  "title" | "scope" | "description" | "impact" | "mitigation" | "current_state" | "repo_url"
+> & {
+  urgency?: TechDebtUrgency;
+  file_path?: string;
+  files?: string[];
+  tags?: string[];
+  branch?: string;
+  commit_sha?: string;
 };

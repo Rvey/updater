@@ -143,6 +143,30 @@ class UserSession(Base):
     user: Mapped["User"] = relationship(back_populates="sessions")
 
 
+class TechDebt(Base):
+    __tablename__ = "tech_debt"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    title: Mapped[str] = mapped_column(String(180))
+    scope: Mapped[str] = mapped_column(String(300))
+    description: Mapped[str] = mapped_column(Text)
+    impact: Mapped[str] = mapped_column(Text, default="")
+    mitigation: Mapped[str] = mapped_column(Text, default="")
+    current_state: Mapped[str] = mapped_column(Text, default="")
+    urgency: Mapped[str] = mapped_column(String(20), default="medium")
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    repo_url: Mapped[str] = mapped_column(String(600), default="")
+    file_path: Mapped[str | None] = mapped_column(String(600), nullable=True, default=None)
+    files: Mapped[list[str]] = mapped_column(JSON, default=list)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    branch: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    commit_sha: Mapped[str | None] = mapped_column(String(80), nullable=True, default=None)
+    author_agent: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+
+
 def normalize_database_url(url: str) -> str:
     # Dokploy/env copy-paste often adds surrounding quotes, whitespace, or newlines.
     # Strip them so a valid URL doesn't fail with SQLAlchemy's cryptic

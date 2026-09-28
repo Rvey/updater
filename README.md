@@ -61,10 +61,11 @@ Run one CLI command and your agent can publish and read updates through MCP. No 
 - **Ship log UI** — browse, search, and filter every verified feature.
 - **Update detail** — why, how it works, impact, tradeoffs, learning notes, files, tags, branch, commit, PR.
 - **Impact over time** — add dated observations when you learn what a feature actually changed.
+- **Tech debt inbox** — run `/tech-depth` in your agent checkout to scan for tech debt and rushed decisions; each finding lands in the app with scope, description, mitigation, urgency, impact, and what is covered today.
 - **Quick notes** — scratch space with per-note colors for follow-ups, reminders, and ideas.
 - **Q&A per update** — ask questions inside the update; answers stay attached to the decision.
 - **Manual add** — capture an update from the UI when no agent was involved.
-- **MCP server** — `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact` over Streamable HTTP at `/mcp` (stdio fallback included).
+- **MCP server** — `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact`, `report_tech_debt`, `list_tech_debt`, `get_tech_debt`, `update_tech_debt` over Streamable HTTP at `/mcp` (stdio fallback included).
 - **Auth** — log in with email + password and issue per-agent API keys (`upk_…`), or keep the single `UPDATER_TOKEN` env secret. Either unlocks the API + MCP.
 - **Postgres in prod, SQLite locally** — zero-config local preview, persistent deployment with `DATABASE_URL`.
 - **Dokploy-ready** — separate `web` + `api` services in `compose.dokploy.yml`.
@@ -106,7 +107,7 @@ Open <http://localhost:5173>. Without a `.env` file the API creates `backend/upd
 
 ## Connect an agent
 
-One command sets up everything — MCP access plus the `/updater`, `/updater-ship`, `/updater-check`, `/updater-impact` commands — for opencode, codex, Claude Code, and Cursor. It prompts for your API key, then lets you pick agents (one or many). (The in-app **Connect an agent** dialog builds the same command for any URL.)
+One command sets up everything — MCP access plus the `/updater`, `/updater-ship`, `/updater-check`, `/updater-impact`, `/tech-depth` commands — for opencode, codex, Claude Code, and Cursor. It prompts for your API key, then lets you pick agents (one or many). (The in-app **Connect an agent** dialog builds the same command for any URL.)
 
 Deployed version:
 
@@ -194,7 +195,12 @@ curl -f https://updaterapi.blitzgo.io/api/health
 | POST | `/api/notes` | Create a note with a color |
 | PATCH | `/api/notes/{id}` | Update a note title, content, or color |
 | DELETE | `/api/notes/{id}` | Delete a note |
-| POST | `/mcp` | MCP tools: `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact`, `list_context_requests`, `fulfill_context_request` |
+| GET | `/api/tech-debt?q=&repo=&urgency=&status=` | Search + filter tech debt |
+| POST | `/api/tech-debt` | Report tech debt (scope, description, mitigation, urgency, impact, current state) |
+| GET | `/api/tech-debt/{id}` | Fetch one tech-debt item |
+| PATCH | `/api/tech-debt/{id}` | Update status, urgency, mitigation, current state |
+| DELETE | `/api/tech-debt/{id}` | Delete a tech-debt item |
+| POST | `/mcp` | MCP tools: `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact`, `list_context_requests`, `fulfill_context_request`, `report_tech_debt`, `list_tech_debt`, `get_tech_debt`, `update_tech_debt` |
 | POST | `/api/auth/register` | Create an account (first login session returned) |
 | POST | `/api/auth/login` | Sign in (login session returned) |
 | POST | `/api/auth/logout` | Revoke the current login session |

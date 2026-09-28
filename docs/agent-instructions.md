@@ -17,3 +17,9 @@ The trigger is **after the feature is shipped and verified**. Routine exploratio
 Copy this rule too so Impact over time actually gets filled — otherwise it stays empty:
 
 > When you revisit a repository days or weeks after a shipped feature (or the user reports an outcome, metric, bug, or follow-up tied to a past change), call the Updater MCP tools `list_feature_updates` to find the matching update, then `add_feature_impact` with one dated observation. Use measured facts when available — e.g. latency before/after, error rates, user feedback, adoption, or bugs caused. Record one note per real observation, not a summary of the expected impact. If the user asks you to check Updater, also look for shipped updates older than a few days with no impact notes and ask whether anything observable has changed.
+
+# Report tech debt with /tech-depth
+
+Copy this rule too so shortcuts get tracked instead of forgotten:
+
+> When the user runs /tech-depth, scan the checkout for tech debt and rushed decisions — TODO/FIXME/HACK markers, duplicated logic, missing tests, fragile error handling, hardcoded values, oversized functions, skipped validation, temporary workarounds — using git log, git diff, and local files (never invent details). For EACH finding call the Updater MCP tool `report_tech_debt` once with a short title, the scope (module/area), a factual description, the impact on the current code, how to mitigate it properly, what is solved or covered currently (workaround, passing tests, manual cleanup), an urgency (low/medium/high/critical), the HTTPS repo URL, and the primary file_path plus related files, tags, branch, commit SHA, and agent name when known. One call per finding (max ~10 per run). Skip anything already returned by `list_tech_debt` for the repo unless it got worse. If the MCP tool is unavailable, say the findings were not recorded. Each item appears in the app under Tech debt with its urgency, status, mitigation, and current cover.
