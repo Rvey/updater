@@ -99,6 +99,7 @@ function Nav() {
         <nav className="mk-nav-links" aria-label="Primary">
           <a href="#why">Why Updater</a>
           <a href="#how">How it works</a>
+          <a href="#demo">Demo</a>
           <a href="#features">Features</a>
           <a href="#open-source">Open source</a>
         </nav>
@@ -118,6 +119,7 @@ function Nav() {
           <nav aria-label="Mobile">
             <a href="#why" onClick={() => setOpen(false)}>Why Updater</a>
             <a href="#how" onClick={() => setOpen(false)}>How it works</a>
+            <a href="#demo" onClick={() => setOpen(false)}>Demo</a>
             <a href="#features" onClick={() => setOpen(false)}>Features</a>
             <a href="#open-source" onClick={() => setOpen(false)}>Open source</a>
             <a href={LINKS.app} onClick={() => setOpen(false)}>Log in →</a>
@@ -306,6 +308,67 @@ function How() {
     </section>
   );
 }
+function Demo() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    let played = false;
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.intersectionRatio >= 0.4 && !played) {
+            played = true;
+            el.play().catch(() => {});
+          } else if (!entry.isIntersecting && !el.paused) {
+            el.pause();
+          }
+        });
+      },
+      { threshold: [0, 0.4] }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  return (
+    <section id="demo" className="mk-section" aria-labelledby="demo-h">
+      <div className="mk-wrap">
+        <p className="mk-label">REAL RECORDING · NO MOCKUPS</p>
+        <h2 id="demo-h" className="mk-h2">Watch a feature go from verified to remembered.</h2>
+        <p className="mk-sub">
+          A raw 29-second screen recording: the agent implements and verifies the Kanban board feature in the terminal, publishes it over MCP, and the update lands at the top of Updater's ship log — 25 features shipped, including this one.
+        </p>
+        <figure className="mk-demo">
+          <div className="mk-shot-bar">
+            <span className="mk-traffic" aria-hidden="true"><i style={{ background: "#FF5F57" }} /><i style={{ background: "#FEBC2E" }} /><i style={{ background: "#28C840" }} /></span>
+            <span className="url">updater — agent terminal + ship log</span>
+            <span className="mk-rec"><i aria-hidden="true" />REC · 00:29</span>
+          </div>
+          <video
+            ref={videoRef}
+            controls
+            muted
+            loop
+            playsInline
+            preload="metadata"
+            poster="/media/updater-demo-poster.jpg"
+            width={1920}
+            height={1080}
+            aria-label="Screen recording: an agent implements and verifies the Kanban board feature, publishes it to Updater over MCP, and the ship log picks up the new update"
+          >
+            <source src="/media/updater-demo.mp4" type="video/mp4" />
+            <a href="/media/updater-demo.mp4">Watch the demo recording (MP4)</a>
+          </video>
+          <figcaption className="mk-demo-note">
+            Left: the agent working through the implementation and its checks. Right: the same feature appearing in the ship log, with why, how, impact, files, and tags attached.
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+  );
+}
+
 function ShipLog() {
   return (
     <section className="mk-section" aria-labelledby="log-h">
@@ -517,6 +580,7 @@ export default function Homepage() {
         <Problem />
         <Origin />
         <How />
+        <Demo />
         <ShipLog />
         <Features />
         <Agents />

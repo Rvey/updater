@@ -11,7 +11,7 @@
 
 Updater is an open-source shipping log for work done with coding agents. When an agent finishes and verifies a feature, it calls an MCP tool that saves the **what, why, how, expected impact, tradeoffs, files, and repo link**. The React workspace lets you search history, record what actually happened over time, and ask questions inside each update.
 
-> Screenshots below are the real app running locally with demo content.
+> Screenshots and the demo recording below are the real app running locally with demo content.
 
 ## Live deployment
 
@@ -31,6 +31,12 @@ curl -fsSL https://updaterapi.blitzgo.io/connect.sh | bash
 It prompts for your API key (`upk_…` from the web UI **Settings → API keys**), then lets you pick agents (one or many). No `--url` / `--agents` flags needed — the script already defaults to this server.
 
 ## Screenshots
+
+### Demo — watch an agent ship a feature
+
+[![Watch the 29-second demo recording: the agent implements and verifies the Kanban board feature while Updater's ship log picks up the published update, reaching 25 features shipped](frontend/public/media/updater-demo-poster-play.jpg)](frontend/public/media/updater-demo.mp4)
+
+A raw 29-second screen recording: the agent implements and verifies the Kanban board feature in the terminal, publishes it over MCP, and the update lands at the top of Updater's ship log — 25 features shipped, including this one. The same recording plays inline on the landing page **Demo** section.
 
 ### The real thing — workspace, ship log, and update detail
 
@@ -240,7 +246,7 @@ git push -u origin rvey/my-feature
 
 - Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
 - Keep secrets out of Git. Use `backend/.env` locally and Dokploy env in prod.
-- Screenshots live in `docs/screenshots/` and are referenced by relative path so they render on GitHub.
+- Screenshots live in `docs/screenshots/` and demo media in `frontend/public/media/`; both are referenced by relative path so they render on GitHub and are served by the web app.
 
 ## License
 
