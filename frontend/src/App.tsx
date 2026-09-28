@@ -105,7 +105,44 @@ function initials(name: string) {
   return name.slice(0, 2).toUpperCase();
 }
 
-const UPDATES_PAGE_SIZE = 8;
+const UPDATES_BATCH_SIZE = 500;
+
+async function loadAllUpdates(token: string, signal?: AbortSignal): Promise<Update[]> {
+  const updates: Update[] = [];
+  for (let offset = 0; ; offset += UPDATES_BATCH_SIZE) {
+    const batch = await request<Update[]>(
+      `/updates?limit=${UPDATES_BATCH_SIZE}&offset=${offset}`,
+      token,
+      { signal },
+    );
+    updates.push(...batch);
+    if (batch.length < UPDATES_BATCH_SIZE) return updates;
+  }
+}
+
+function updateSearchText(update: Update): string {
+  return [
+    update.title,
+    update.summary,
+    update.repo_url,
+    update.external_id,
+    update.branch,
+    update.commit_sha,
+    update.pr_url,
+    update.author_agent,
+    update.why,
+    update.how_it_works,
+    update.impact,
+    update.tradeoffs,
+    update.learning_notes,
+    ...update.tags,
+    ...update.files_changed,
+    ...update.code_context.flatMap((excerpt) => [excerpt.path, excerpt.content]),
+    ...update.impact_notes.map((note) => note.note),
+    ...update.questions.flatMap((item) => [item.question, item.answer]),
+    ...update.context_requests.map((item) => item.question),
+  ].filter(Boolean).join(" ").toLowerCase();
+}
 
 function fullDateTime(date: string) {
   try {
@@ -1010,7 +1047,6 @@ function WorkspaceApp() {
   const [updates, setUpdates] = useState<Update[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [updatesPage, setUpdatesPage] = useState(1);
   const [repo, setRepo] = useState("All updates");
   const [view, setView] = useState<"updates" | "questions" | "notes" | "tech-debt" | "settings">("updates");
   const [loading, setLoading] = useState(true);
@@ -1043,8 +1079,9 @@ function WorkspaceApp() {
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
-    request<Update[]>("/updates?limit=500&offset=0", token)
+    loadAllUpdates(token, controller.signal)
       .then((items) => {
         if (cancelled) return;
         setUpdates(items);
@@ -1058,6 +1095,7 @@ function WorkspaceApp() {
       })
       .catch((err) => {
         if (cancelled) return;
+        if (err instanceof Error && err.name === "AbortError") return;
         setUnauthorized(err.status === 401);
         setError(err.status === 401 ? "" : err.message);
       })
@@ -1066,6 +1104,7 @@ function WorkspaceApp() {
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [token]);
 
@@ -1083,7 +1122,7 @@ function WorkspaceApp() {
     // Refresh the ship log when "Connected agents" opens so the agent list is current.
     if (!token || view !== "settings" || settingsSection !== "agents") return;
     let cancelled = false;
-    request<Update[]>("/updates?limit=500&offset=0", token)
+    loadAllUpdates(token)
       .then((items) => {
         if (!cancelled) setUpdates(items);
       })
@@ -1103,25 +1142,12 @@ function WorkspaceApp() {
     () =>
       updates.filter((item) => {
         const matchesRepo = repo === "All updates" || item.repo_url === repo;
-        const text =
-          `${item.title} ${item.summary} ${item.why} ${item.how_it_works} ${item.tags.join(" ")}`.toLowerCase();
-        const matchesSearch = text.includes(search.toLowerCase().trim());
+        const matchesSearch = updateSearchText(item).includes(search.toLowerCase().trim());
         const matchesView = view === "updates" || item.questions.length > 0;
         return matchesRepo && matchesSearch && matchesView;
       }),
     [updates, repo, search, view],
   );
-  const totalUpdatePages = Math.max(1, Math.ceil(filtered.length / UPDATES_PAGE_SIZE));
-  const safeUpdatePage = Math.min(updatesPage, totalUpdatePages);
-  const pagedFiltered = filtered.slice(
-    (safeUpdatePage - 1) * UPDATES_PAGE_SIZE,
-    safeUpdatePage * UPDATES_PAGE_SIZE,
-  );
-  const pageStart = filtered.length === 0 ? 0 : (safeUpdatePage - 1) * UPDATES_PAGE_SIZE + 1;
-  const pageEnd = Math.min(safeUpdatePage * UPDATES_PAGE_SIZE, filtered.length);
-  useEffect(() => {
-    setUpdatesPage(1);
-  }, [search, repo, view, updates.length]);
   const selected =
     filtered.find((item) => item.id === selectedId) || filtered[0];
   const questionCount = updates.reduce(
@@ -1141,7 +1167,6 @@ function WorkspaceApp() {
       setRepo("All updates");
       setView("updates");
       setSearch("");
-      setUpdatesPage(1);
       setNewOpen(false);
       setMobileDetail(true);
     } finally {
@@ -1181,7 +1206,7 @@ function WorkspaceApp() {
 
 
   const openWithToken = (value: string) => {
-    request<Update[]>("/updates?limit=500&offset=0", value)
+    loadAllUpdates(value)
       .then((items) => {
         sessionStorage.setItem("updater-token", value);
         setUpdates(items);
@@ -1525,11 +1550,6 @@ function WorkspaceApp() {
               <span>
                 {filtered.length}{" "}
                 {view === "questions" ? "CONVERSATIONS" : "UPDATES"}
-                {filtered.length > 0 && (
-                  <span className="page-range">
-                    {" "}· showing {pageStart}-{pageEnd}
-                  </span>
-                )}
               </span>
               <span>
                 MOST RECENT <ArrowDownRight size={13} />
@@ -1545,7 +1565,7 @@ function WorkspaceApp() {
                   <p>{error}</p>
                 </div>
               ) : filtered.length ? (
-                pagedFiltered.map((item) => (
+                filtered.map((item) => (
                   <button
                     key={item.id}
                     className={`update-row ${selected?.id === item.id ? "selected" : ""}`}
@@ -1606,55 +1626,6 @@ function WorkspaceApp() {
                 </div>
               )}
             </div>
-            {filtered.length > UPDATES_PAGE_SIZE && (
-              <div className="pagination" aria-label="Updates pagination">
-                <button
-                  className="page-btn"
-                  disabled={safeUpdatePage <= 1}
-                  onClick={() => setUpdatesPage((p) => Math.max(1, p - 1))}
-                  aria-label="Previous page"
-                >
-                  <ArrowLeft size={14} /> Prev
-                </button>
-                <span className="page-info">
-                  Page {safeUpdatePage} of {totalUpdatePages}
-                </span>
-                <div className="page-numbers">
-                  {Array.from({ length: totalUpdatePages }, (_, i) => i + 1)
-                    .filter((n) => n === 1 || n === totalUpdatePages || Math.abs(n - safeUpdatePage) <= 1)
-                    .reduce<(number | "gap")[]>((acc, n, idx, arr) => {
-                      if (idx > 0 && n - (arr[idx - 1] as number) > 1) acc.push("gap");
-                      acc.push(n);
-                      return acc;
-                    }, [])
-                    .map((n, idx) =>
-                      n === "gap" ? (
-                        <span key={"gap-" + idx} className="page-gap">
-                          …
-                        </span>
-                      ) : (
-                        <button
-                          key={n}
-                          className={"page-num" + (n === safeUpdatePage ? " active" : "")}
-                          onClick={() => setUpdatesPage(n as number)}
-                          aria-label={"Go to page " + n}
-                          aria-current={n === safeUpdatePage ? "page" : undefined}
-                        >
-                          {n}
-                        </button>
-                      ),
-                    )}
-                </div>
-                <button
-                  className="page-btn"
-                  disabled={safeUpdatePage >= totalUpdatePages}
-                  onClick={() => setUpdatesPage((p) => Math.min(totalUpdatePages, p + 1))}
-                  aria-label="Next page"
-                >
-                  Next <ArrowRight size={14} />
-                </button>
-              </div>
-            )}
           </section>
           <section className="detail-panel" aria-label="Update details">
             {selected ? (
