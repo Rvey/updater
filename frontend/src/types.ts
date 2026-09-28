@@ -85,6 +85,7 @@ export type Update = {
   commit_sha: string | null;
   pr_url: string | null;
   author_agent: string | null;
+  user_id?: string | null;
   why: string;
   how_it_works: string;
   impact: string;

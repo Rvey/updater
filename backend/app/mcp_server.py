@@ -110,7 +110,7 @@ async def list_feature_updates(query: str = "") -> list[dict[str, Any]]:
     """Search recorded feature updates by title, summary, reason or implementation."""
     from urllib.parse import urlencode
 
-    result = await api_request("GET", f"/api/updates?{urlencode({'q': query})}")
+    result = await api_request("GET", f"/api/updates?{urlencode({'q': query, 'limit': 100, 'offset': 0})}")
     return [
         {"id": item["id"], "title": item["title"], "summary": item["summary"], "repo_url": item["repo_url"], "shipped_at": item["shipped_at"]}
         for item in result

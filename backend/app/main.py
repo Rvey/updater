@@ -1,7 +1,7 @@
 import hmac
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
@@ -182,8 +182,11 @@ def config() -> dict[str, bool]:
 
 @app.get("/api/updates", response_model=list[UpdateRead], dependencies=[Depends(require_token)])
 def list_updates(
+    response: Response,
     q: str = Query(default="", max_length=200),
     repo: str = Query(default="", max_length=600),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> list[Update]:
     query = select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests)).order_by(Update.shipped_at.desc())
@@ -194,7 +197,11 @@ def list_updates(
     if repo.strip():
         wanted = _normalize_repo_url(repo)
         items = [u for u in items if _normalize_repo_url(u.repo_url) == wanted]
-    return items
+    total = len(items)
+    response.headers["X-Total-Count"] = str(total)
+    if offset >= total:
+        return []
+    return items[offset:offset + limit]
 
 
 def _merge_republish(existing: Update, payload: UpdateCreate, db: Session) -> Update:

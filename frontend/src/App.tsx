@@ -104,6 +104,68 @@ function initials(name: string) {
   return name.slice(0, 2).toUpperCase();
 }
 
+const UPDATES_PAGE_SIZE = 8;
+
+function fullDateTime(date: string) {
+  try {
+    return new Date(date).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return date;
+  }
+}
+
+async function copyText(value: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    try {
+      const field = document.createElement("textarea");
+      field.value = value;
+      field.style.position = "fixed";
+      field.style.opacity = "0";
+      document.body.appendChild(field);
+      field.select();
+      const ok = document.execCommand("copy");
+      field.remove();
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function CopyButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  if (!value) return null;
+  return (
+    <button
+      className="copy-chip"
+      aria-label={"Copy " + label}
+      title={"Copy " + label}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        copyText(value).then((ok) => {
+          if (ok) {
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1400);
+          }
+        });
+      }}
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
 function Logo() {
   return (
     <div className="brand">
@@ -632,6 +694,15 @@ function UpdateDetail({
       </div>
       <h1>{update.title}</h1>
       <p className="detail-summary">{update.summary}</p>
+      {(update.tags?.length ?? 0) > 0 && (
+        <div className="detail-tags">
+          {update.tags.map((tag) => (
+            <span className="tag" key={tag}>
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="detail-meta">
         <a href={update.repo_url} target="_blank" rel="noreferrer">
           <Github size={15} /> {repoOwner(update.repo_url)}/
@@ -645,6 +716,7 @@ function UpdateDetail({
         {update.commit_sha && (
           <span title={update.commit_sha}>
             <GitCommitHorizontal size={14} /> {update.commit_sha.slice(0, 7)}
+            <CopyButton value={update.commit_sha} label="commit SHA" />
           </span>
         )}
         {update.branch && (
@@ -657,6 +729,84 @@ function UpdateDetail({
             <Sparkles size={14} /> {update.author_agent}
           </span>
         )}
+      </div>
+      <div className="record-grid" aria-label="Record details">
+        <div className="record-field">
+          <span>Update ID</span>
+          <code title={update.id}>{update.id}</code>
+          <CopyButton value={update.id} label="update ID" />
+        </div>
+        <div className="record-field">
+          <span>External ID</span>
+          {update.external_id ? (
+            <>
+              <code title={update.external_id}>{update.external_id}</code>
+              <CopyButton value={update.external_id} label="external ID" />
+            </>
+          ) : (
+            <em>—</em>
+          )}
+        </div>
+        <div className="record-field">
+          <span>Repository URL</span>
+          <code title={update.repo_url}>{update.repo_url}</code>
+          <CopyButton value={update.repo_url} label="repository URL" />
+        </div>
+        <div className="record-field">
+          <span>Branch</span>
+          {update.branch ? <code>{update.branch}</code> : <em>—</em>}
+        </div>
+        <div className="record-field">
+          <span>Commit SHA</span>
+          {update.commit_sha ? (
+            <>
+              <code title={update.commit_sha}>{update.commit_sha}</code>
+              <CopyButton value={update.commit_sha} label="commit SHA" />
+            </>
+          ) : (
+            <em>—</em>
+          )}
+        </div>
+        <div className="record-field">
+          <span>Pull request</span>
+          {update.pr_url ? (
+            <a href={update.pr_url} target="_blank" rel="noreferrer">
+              {update.pr_url} <ArrowUpRight size={12} />
+            </a>
+          ) : (
+            <em>—</em>
+          )}
+        </div>
+        <div className="record-field">
+          <span>Author agent</span>
+          {update.author_agent ? <code>{update.author_agent}</code> : <em>—</em>}
+        </div>
+        {(update as { user_id?: string | null }).user_id ? (
+          <div className="record-field">
+            <span>User ID</span>
+            <code>{(update as { user_id?: string | null }).user_id}</code>
+          </div>
+        ) : null}
+        <div className="record-field">
+          <span>Shipped at</span>
+          <code title={update.shipped_at}>
+            {fullDateTime(update.shipped_at)} · {relativeDate(update.shipped_at)}
+          </code>
+        </div>
+        <div className="record-field">
+          <span>Created at</span>
+          <code title={update.created_at}>
+            {fullDateTime(update.created_at)} · {relativeDate(update.created_at)}
+          </code>
+        </div>
+        <div className="record-field">
+          <span>Counts</span>
+          <code>
+            {(update.files_changed?.length ?? 0)} files · {(update.tags?.length ?? 0)} tags ·{" "}
+            {(update.code_context?.length ?? 0)} excerpts · {update.questions.length} questions ·{" "}
+            {update.impact_notes.length} impact notes · {(update.context_requests?.length ?? 0)} context requests
+          </code>
+        </div>
       </div>
       <div className="detail-divider" />
       <InfoSection number="01" title="Why this was built">
@@ -712,12 +862,131 @@ function UpdateDetail({
         </form>
         {impactError && <div className="form-error">{impactError}</div>}
       </InfoSection>
-      {update.tradeoffs && (
-        <InfoSection number="05" title="Tradeoffs & follow-ups">
-          <p>{update.tradeoffs}</p>
-        </InfoSection>
+      <InfoSection number="05" title="Tradeoffs & follow-ups">
+        {update.tradeoffs ? <p>{update.tradeoffs}</p> : <p className="impact-empty">No tradeoffs recorded.</p>}
+      </InfoSection>
+      <InfoSection number="06" title="Learning notes">
+        {update.learning_notes ? (
+          <p>{update.learning_notes}</p>
+        ) : (
+          <p className="impact-empty">No learning notes recorded.</p>
+        )}
+      </InfoSection>
+      <section className="files-section">
+        <div className="files-title">
+          <FileCode2 size={16} /> ALL FILES CHANGED <span>{update.files_changed.length}</span>
+        </div>
+        {update.files_changed.length > 0 ? (
+          <div className="file-list">
+            {update.files_changed.map((file) => (
+              <div key={file}>
+                <Code2 size={14} />
+                <span>{file}</span>
+                <CopyButton value={file} label="file path" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="impact-empty">No files recorded.</p>
+        )}
+      </section>
+      <section className="files-section">
+        <div className="files-title">
+          <Code2 size={16} /> ALL CODE EXCERPTS <span>{update.code_context?.length ?? 0}</span>
+        </div>
+        {(update.code_context?.length ?? 0) > 0 ? (
+          update.code_context.map((excerpt, index) => (
+            <div key={(excerpt.path ?? "excerpt") + "-" + index} className="code-excerpt">
+              <div className="code-excerpt-path">
+                <span>
+                  {excerpt.path}
+                  {excerpt.start_line != null && excerpt.end_line != null
+                    ? " · lines " + excerpt.start_line + "-" + excerpt.end_line
+                    : excerpt.start_line != null
+                      ? " · from line " + excerpt.start_line
+                      : ""}
+                </span>
+                <CopyButton value={excerpt.content} label="code excerpt" />
+              </div>
+              <pre className="code-excerpt-body">{excerpt.content}</pre>
+            </div>
+          ))
+        ) : (
+          <p className="impact-empty">No code excerpts attached yet. Ask your agent for code context below.</p>
+        )}
+      </section>
+      <section className="files-section">
+        <div className="files-title">
+          <MessageCircle size={16} /> ALL CONTEXT REQUESTS{" "}
+          <span>{update.context_requests?.length ?? 0}</span>
+        </div>
+        {(update.context_requests?.length ?? 0) > 0 ? (
+          <div className="context-list">
+            {update.context_requests.map((req) => (
+              <div key={req.id} className="context-entry">
+                <div className="context-entry-head">
+                  <span className={"status-pill status-" + req.status}>{req.status}</span>
+                  <span className="context-date" title={req.created_at}>
+                    asked {fullDateTime(req.created_at)}
+                  </span>
+                  {req.fulfilled_at && (
+                    <span className="context-date" title={req.fulfilled_at}>
+                      {" · fulfilled "}{fullDateTime(req.fulfilled_at)}
+                    </span>
+                  )}
+                </div>
+                <p className="context-question">{req.question}</p>
+                {(req.excerpts?.length ?? 0) > 0 && (
+                  <div className="context-excerpts">
+                    {req.excerpts.map((ex2, idx2) => (
+                      <div key={(ex2.path ?? "excerpt") + "-" + idx2} className="code-excerpt">
+                        <div className="code-excerpt-path">
+                          <span>
+                            {ex2.path}
+                            {ex2.start_line != null && ex2.end_line != null
+                              ? " · lines " + ex2.start_line + "-" + ex2.end_line
+                              : ""}
+                          </span>
+                          <CopyButton value={ex2.content} label="code excerpt" />
+                        </div>
+                        <pre className="code-excerpt-body">{ex2.content}</pre>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="context-id">
+                  <code title={req.id}>{req.id}</code>
+                  <CopyButton value={req.id} label="request ID" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="impact-empty">No context requests yet.</p>
+        )}
+      </section>
+      {(update.questions?.length ?? 0) > 0 && (
+        <section className="files-section">
+          <div className="files-title">
+            <MessageCircle size={16} /> ALL QUESTIONS & ANSWERS <span>{update.questions.length}</span>
+          </div>
+          <div className="context-list">
+            {update.questions.map((item) => (
+              <div key={item.id} className="context-entry">
+                <div className="context-entry-head">
+                  <span className="status-pill">{item.source === "ai" ? "UPDATER AI" : "SAVED CONTEXT"}</span>
+                  <span className="context-date" title={item.created_at}>
+                    {fullDateTime(item.created_at)}
+                  </span>
+                </div>
+                <p className="context-question">{item.question}</p>
+                <p className="context-answer">{item.answer}</p>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
-      {update.files_changed.length > 0 && (
+      {false && update.files_changed.length > 0 && (
         <section className="files-section">
           <div className="files-title">
             <FileCode2 size={16} /> FILES TO EXPLORE{" "}
@@ -733,14 +1002,14 @@ function UpdateDetail({
           </div>
         </section>
       )}
-      {(update.code_context?.length ?? 0) > 0 && (
+      {false && (update.code_context?.length ?? 0) > 0 && (
         <section className="files-section">
           <div className="files-title">
             <Code2 size={16} /> CODE FROM YOUR AGENT{" "}
             <span>{update.code_context.length}</span>
           </div>
           {update.code_context.map((excerpt) => (
-            <div key={excerpt.path} className="code-excerpt">
+            <div key={(excerpt as { path?: string }).path} className="code-excerpt">
               <div className="code-excerpt-path">
                 {excerpt.path}
                 {excerpt.start_line && excerpt.end_line ? ` · lines ${excerpt.start_line}-${excerpt.end_line}` : ""}
@@ -758,7 +1027,10 @@ function UpdateDetail({
             </a>
           )}
           {update.commit_sha && (
-            <span>Commit {update.commit_sha.slice(0, 7)}</span>
+            <span title={update.commit_sha}>
+              Commit {update.commit_sha.slice(0, 7)} · <code>{update.commit_sha}</code>{" "}
+              <CopyButton value={update.commit_sha} label="commit SHA" />
+            </span>
           )}
         </div>
       )}
@@ -1048,6 +1320,7 @@ export default function App() {
   const [updates, setUpdates] = useState<Update[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [updatesPage, setUpdatesPage] = useState(1);
   const [repo, setRepo] = useState("All updates");
   const [view, setView] = useState<"updates" | "questions" | "notes" | "tech-debt">("updates");
   const [loading, setLoading] = useState(true);
@@ -1082,7 +1355,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    request<Update[]>("/updates", token)
+    request<Update[]>("/updates?limit=500&offset=0", token)
       .then((items) => {
         if (cancelled) return;
         setUpdates(items);
@@ -1133,6 +1406,17 @@ export default function App() {
       }),
     [updates, repo, search, view],
   );
+  const totalUpdatePages = Math.max(1, Math.ceil(filtered.length / UPDATES_PAGE_SIZE));
+  const safeUpdatePage = Math.min(updatesPage, totalUpdatePages);
+  const pagedFiltered = filtered.slice(
+    (safeUpdatePage - 1) * UPDATES_PAGE_SIZE,
+    safeUpdatePage * UPDATES_PAGE_SIZE,
+  );
+  const pageStart = filtered.length === 0 ? 0 : (safeUpdatePage - 1) * UPDATES_PAGE_SIZE + 1;
+  const pageEnd = Math.min(safeUpdatePage * UPDATES_PAGE_SIZE, filtered.length);
+  useEffect(() => {
+    setUpdatesPage(1);
+  }, [search, repo, view, updates.length]);
   const selected =
     filtered.find((item) => item.id === selectedId) || filtered[0];
   const questionCount = updates.reduce(
@@ -1152,6 +1436,7 @@ export default function App() {
       setRepo("All updates");
       setView("updates");
       setSearch("");
+      setUpdatesPage(1);
       setNewOpen(false);
       setMobileDetail(true);
     } finally {
@@ -1185,7 +1470,7 @@ export default function App() {
 
 
   const openWithToken = (value: string) => {
-    request<Update[]>("/updates", value)
+    request<Update[]>("/updates?limit=500&offset=0", value)
       .then((items) => {
         sessionStorage.setItem("updater-token", value);
         setUpdates(items);
@@ -1528,6 +1813,11 @@ export default function App() {
               <span>
                 {filtered.length}{" "}
                 {view === "questions" ? "CONVERSATIONS" : "UPDATES"}
+                {filtered.length > 0 && (
+                  <span className="page-range">
+                    {" "}· showing {pageStart}-{pageEnd}
+                  </span>
+                )}
               </span>
               <span>
                 MOST RECENT <ArrowDownRight size={13} />
@@ -1543,7 +1833,7 @@ export default function App() {
                   <p>{error}</p>
                 </div>
               ) : filtered.length ? (
-                filtered.map((item) => (
+                pagedFiltered.map((item) => (
                   <button
                     key={item.id}
                     className={`update-row ${selected?.id === item.id ? "selected" : ""}`}
@@ -1604,6 +1894,55 @@ export default function App() {
                 </div>
               )}
             </div>
+            {filtered.length > UPDATES_PAGE_SIZE && (
+              <div className="pagination" aria-label="Updates pagination">
+                <button
+                  className="page-btn"
+                  disabled={safeUpdatePage <= 1}
+                  onClick={() => setUpdatesPage((p) => Math.max(1, p - 1))}
+                  aria-label="Previous page"
+                >
+                  <ArrowLeft size={14} /> Prev
+                </button>
+                <span className="page-info">
+                  Page {safeUpdatePage} of {totalUpdatePages}
+                </span>
+                <div className="page-numbers">
+                  {Array.from({ length: totalUpdatePages }, (_, i) => i + 1)
+                    .filter((n) => n === 1 || n === totalUpdatePages || Math.abs(n - safeUpdatePage) <= 1)
+                    .reduce<(number | "gap")[]>((acc, n, idx, arr) => {
+                      if (idx > 0 && n - (arr[idx - 1] as number) > 1) acc.push("gap");
+                      acc.push(n);
+                      return acc;
+                    }, [])
+                    .map((n, idx) =>
+                      n === "gap" ? (
+                        <span key={"gap-" + idx} className="page-gap">
+                          …
+                        </span>
+                      ) : (
+                        <button
+                          key={n}
+                          className={"page-num" + (n === safeUpdatePage ? " active" : "")}
+                          onClick={() => setUpdatesPage(n as number)}
+                          aria-label={"Go to page " + n}
+                          aria-current={n === safeUpdatePage ? "page" : undefined}
+                        >
+                          {n}
+                        </button>
+                      ),
+                    )}
+                </div>
+                <button
+                  className="page-btn"
+                  disabled={safeUpdatePage >= totalUpdatePages}
+                  onClick={() => setUpdatesPage((p) => Math.min(totalUpdatePages, p + 1))}
+                  aria-label="Next page"
+                >
+                  Next <ArrowRight size={14} />
+                </button>
+              </div>
+            )}
           </section>
           <section className="detail-panel" aria-label="Update details">
             {selected ? (
