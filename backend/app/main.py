@@ -367,17 +367,18 @@ def _ensure_note_columns() -> None:
         ("file_path", "VARCHAR(600)"),
         ("commit_hash", "VARCHAR(80)"),
         ("related_url", "VARCHAR(600)"),
-        ("due_date", "TIMESTAMP"),
+        ("due_date", "TIMESTAMPTZ"),
         ("pinned", "BOOLEAN"),
         ("archived", "BOOLEAN"),
     ]
+    # Boolean backfill must use TRUE/FALSE (Postgres has no integer-to-boolean cast; 0 aborts startup).
     defaults: dict[str, str] = {
         "category": "'general'",
         "status": "'open'",
         "priority": "'none'",
         "tags": "'[]'",
-        "pinned": "0",
-        "archived": "0",
+        "pinned": "FALSE",
+        "archived": "FALSE",
     }
     with engine.begin() as connection:
         for name, ddl in wanted:
