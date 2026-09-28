@@ -531,7 +531,7 @@ function UpdateDetail({
    setContextSent(false);
    setContextError("");
  }, [update.id]);
- const pendingRequests = (update.context_requests ?? []).filter((item) => item.status === "pending");
+ const pendingRequests = (update.context_requests ?? []).filter((item) => item.status === "pending" || item.status === "claimed");
   const fulfilledRequests = (update.context_requests ?? []).filter((item) => item.status === "fulfilled");
   useEffect(() => {
     if (pendingRequests.length === 0) return;
@@ -862,13 +862,18 @@ function UpdateDetail({
                   <div className="proxy-pending">
                     <span>{pendingRequests.length} waiting on your agent</span>
                     {pendingRequests.map((item) => (
-                      <p key={item.id}>“{item.question}”</p>
+                      <p key={item.id}>“{item.question}”{item.status === "claimed" && item.claimed_by ? " — claimed by " + item.claimed_by : ""}</p>
                     ))}
                     <p className="proxy-note">In your agent checkout run: /updater-check — or MCP list_context_requests then fulfill_context_request. Keep this page open; it will refresh automatically.</p>
                   </div>
                 )}
                 {fulfilledRequests.length > 0 && pendingRequests.length === 0 && (
-                  <p className="proxy-note">Agent replied — see Code from your agent above, then ask again for a code-grounded answer.</p>
+                  <div>
+                    <p className="proxy-note">Agent replied — see Code from your agent above, then ask again for a code-grounded answer.</p>
+                    {fulfilledRequests.slice(-1).map((item) => (item.source_commit || item.source_branch) && (
+                      <p key={item.id} className="proxy-note">Answered from {(item.source_branch || "branch?") + " @ " + (item.source_commit ? item.source_commit.slice(0, 7) : "commit?")}.</p>
+                    ))}
+                  </div>
                 )}
                 {contextError && <div className="form-error">{contextError}</div>}
               </div>

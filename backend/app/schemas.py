@@ -134,12 +134,25 @@ class ContextRequestRead(BaseModel):
     question: str
     status: str
     excerpts: list[CodeExcerpt] = Field(default_factory=list)
+    source_repo_url: str | None = None
+    source_branch: str | None = None
+    source_commit: str | None = None
+    claimed_at: datetime | None = None
+    claimed_by: str | None = None
     created_at: datetime
     fulfilled_at: datetime | None
 
 
 class ContextRequestFulfill(BaseModel):
     excerpts: list[CodeExcerpt] = Field(max_length=8)
+    repo_url: str | None = Field(default=None, max_length=600)
+    branch: str | None = Field(default=None, max_length=255)
+    commit_sha: str | None = Field(default=None, max_length=80)
+    agent: str | None = Field(default=None, max_length=100)
+
+
+class ContextRequestClaim(BaseModel):
+    agent: str | None = Field(default=None, max_length=100)
 
 
 class UpdateRead(BaseModel):
@@ -147,6 +160,7 @@ class UpdateRead(BaseModel):
 
     id: str
     external_id: str | None
+    user_id: str | None = None
     title: str
     summary: str
     repo_url: str
