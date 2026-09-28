@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -51,6 +52,43 @@ def test_republish_merges_and_questions_stay_with_feature(tmp_path) -> None:
             assert observation.status_code == 201
             assert client.get(f"/api/updates/{update_id}").json()["impact_notes"][0]["note"] == "Search time dropped after release."
             assert client.get("/api/updates", params={"repo": "https://github.com/other/repo"}).json() == []
+    finally:
+        main.app.dependency_overrides.clear()
+        test_engine.dispose()
+
+
+def test_updates_with_matching_timestamps_have_stable_batch_order(tmp_path) -> None:
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'test.sqlite3'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(test_engine)
+    session_factory = sessionmaker(bind=test_engine)
+    timestamp = datetime(2026, 9, 28, tzinfo=timezone.utc)
+
+    with session_factory() as session:
+        for update_id in ("a", "b", "c"):
+            session.add(main.Update(
+                id=update_id,
+                title=f"Update {update_id}",
+                summary="A shipped update with the same timestamp.",
+                repo_url="https://github.com/example/repo",
+                why="This records the reason for the change.",
+                how_it_works="The service stores the update.",
+                impact="Users can review the update later.",
+                shipped_at=timestamp,
+                created_at=timestamp,
+            ))
+        session.commit()
+
+    def test_db() -> Generator[Session, None, None]:
+        with session_factory() as session:
+            yield session
+
+    main.app.dependency_overrides[main.get_db] = test_db
+    try:
+        with TestClient(main.app) as client:
+            first = client.get("/api/updates", params={"limit": 2, "offset": 0})
+            second = client.get("/api/updates", params={"limit": 2, "offset": 2})
+            assert first.status_code == second.status_code == 200
+            assert [item["id"] for item in first.json() + second.json()] == ["c", "b", "a"]
     finally:
         main.app.dependency_overrides.clear()
         test_engine.dispose()

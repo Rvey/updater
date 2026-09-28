@@ -225,7 +225,7 @@ def list_updates(
     db: Session = Depends(get_db),
     authorization: str | None = Header(default=None),
 ) -> list[Update]:
-    query = select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests)).order_by(Update.shipped_at.desc())
+    query = select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests)).order_by(Update.shipped_at.desc(), Update.created_at.desc(), Update.id.desc())
     if q.strip():
         term = f"%{q.strip()}%"
         query = query.where(or_(Update.title.ilike(term), Update.summary.ilike(term), Update.why.ilike(term), Update.how_it_works.ilike(term)))
