@@ -42,7 +42,7 @@ Files:
 - `codex/skills/updater-*/SKILL.md` → Codex skills (preferred going forward)
 
 Commands:
-- `updater` → router: bare ships the last verified changes (then checks requests); `updater check` / `updater impact ...` / `updater list ...` for the rest
+- `updater` → router: bare ships the last verified changes (then checks requests); `updater check -> ship` verifies local changes, publishes them to the app, then checks requests; `updater check` / `updater impact ...` / `updater list ...` for the rest
 - `updater-ship` → `publish_feature` (after verified work)
 - `updater-check` → `list_context_requests` + `fulfill_context_request`
 - `updater-impact` → `list_feature_updates` + `add_feature_impact`
