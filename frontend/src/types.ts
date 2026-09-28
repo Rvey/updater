@@ -11,6 +11,11 @@ export type ContextRequest = {
   question: string;
   status: string;
   excerpts: CodeExcerpt[];
+  source_repo_url: string | null;
+  source_branch: string | null;
+  source_commit: string | null;
+  claimed_at: string | null;
+  claimed_by: string | null;
   created_at: string;
   fulfilled_at: string | null;
 };
