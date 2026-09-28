@@ -62,6 +62,9 @@ NOTE_CATEGORIES = ("todo", "bug", "idea", "investigation", "implementation", "co
 NOTE_STATUSES = ("open", "in-progress", "done", "archived")
 NOTE_PRIORITIES = ("none", "low", "medium", "high")
 
+TECH_DEBT_URGENCIES = ("low", "medium", "high", "critical")
+TECH_DEBT_STATUSES = ("open", "in-progress", "resolved", "wont-fix")
+
 
 class NoteCreate(BaseModel):
     title: str = Field(min_length=1, max_length=180)
@@ -140,6 +143,64 @@ class ContextRequestRead(BaseModel):
 
 class ContextRequestFulfill(BaseModel):
     excerpts: list[CodeExcerpt] = Field(max_length=8)
+
+
+class TechDebtCreate(BaseModel):
+    title: str = Field(min_length=3, max_length=180)
+    scope: str = Field(min_length=3, max_length=300)
+    description: str = Field(min_length=10)
+    impact: str = Field(min_length=10)
+    mitigation: str = Field(min_length=10)
+    current_state: str = Field(min_length=3, max_length=4000)
+    urgency: str = Field(default="medium", max_length=20)
+    status: str = Field(default="open", max_length=20)
+    repo_url: HttpUrl
+    file_path: str | None = Field(default=None, max_length=600)
+    files: list[str] = Field(default_factory=list, max_length=20)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    branch: str | None = None
+    commit_sha: str | None = None
+    author_agent: str | None = None
+
+
+class TechDebtUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=3, max_length=180)
+    scope: str | None = Field(default=None, min_length=3, max_length=300)
+    description: str | None = Field(default=None, min_length=10)
+    impact: str | None = Field(default=None, min_length=10)
+    mitigation: str | None = Field(default=None, min_length=10)
+    current_state: str | None = Field(default=None, min_length=3, max_length=4000)
+    urgency: str | None = Field(default=None, max_length=20)
+    status: str | None = Field(default=None, max_length=20)
+    file_path: str | None = Field(default=None, max_length=600)
+    files: list[str] | None = Field(default=None, max_length=20)
+    tags: list[str] | None = Field(default=None, max_length=20)
+    branch: str | None = None
+    commit_sha: str | None = None
+
+
+class TechDebtRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    scope: str
+    description: str
+    impact: str
+    mitigation: str
+    current_state: str
+    urgency: str
+    status: str
+    repo_url: str
+    file_path: str | None
+    files: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    branch: str | None
+    commit_sha: str | None
+    author_agent: str | None
+    created_at: datetime
+    updated_at: datetime
+    resolved_at: datetime | None
 
 
 class UpdateRead(BaseModel):

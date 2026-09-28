@@ -109,6 +109,7 @@ def test_http_mcp_lists_feature_tools(monkeypatch) -> None:
         assert tools.status_code == 200, tools.text
         assert {tool["name"] for tool in tools.json()["result"]["tools"]} == {
             "publish_feature", "list_feature_updates", "get_feature_update", "add_feature_impact", "list_context_requests", "fulfill_context_request",
+            "report_tech_debt", "list_tech_debt", "get_tech_debt", "update_tech_debt",
         }
 def test_agent_proxy_context_flow(tmp_path) -> None:
     test_engine = create_engine(f"sqlite:///{tmp_path / 'proxy.sqlite3'}", connect_args={"check_same_thread": False})
@@ -232,6 +233,57 @@ def test_notes_ticket_fields(tmp_path) -> None:
             assert listed.json()[0]["id"] == note_id
             assert client.delete(f"/api/notes/{note_id}").status_code == 200
             assert client.get("/api/notes").json() == []
+    finally:
+        main.app.dependency_overrides.clear()
+        test_engine.dispose()
+
+
+def test_tech_debt_crud_and_filters(tmp_path) -> None:
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'techdebt.sqlite3'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(test_engine)
+    session_factory = sessionmaker(bind=test_engine)
+
+    def test_db() -> Generator[Session, None, None]:
+        with session_factory() as session:
+            yield session
+
+    main.app.dependency_overrides[main.get_db] = test_db
+    payload = {
+        "title": "Retry duplicates tool calls",
+        "scope": "backend worker retry path",
+        "description": "The worker retries without idempotency keys, so a timeout can enqueue the same job twice.",
+        "impact": "Duplicate side effects in production and noisy logs when the queue backs up.",
+        "mitigation": "Add idempotency keys and make the handler check-then-insert inside one transaction.",
+        "current_state": "Retries succeed for now; duplicates are cleaned up manually once a day.",
+        "urgency": "high",
+        "repo_url": "https://github.com/example/repo",
+        "file_path": "backend/worker.py",
+        "files": ["backend/worker.py"],
+        "tags": ["reliability"],
+    }
+    try:
+        with TestClient(main.app) as client:
+            created = client.post("/api/tech-debt", json=payload)
+            assert created.status_code == 201, created.text
+            body = created.json()
+            assert body["urgency"] == "high"
+            assert body["status"] == "open"
+            debt_id = body["id"]
+            assert client.post("/api/tech-debt", json={**payload, "urgency": "nope"}).status_code == 422
+            fetched = client.get(f"/api/tech-debt/{debt_id}")
+            assert fetched.status_code == 200
+            assert fetched.json()["scope"] == "backend worker retry path"
+            filtered = client.get("/api/tech-debt", params={"q": "idempotency"})
+            assert filtered.status_code == 200
+            assert [item["id"] for item in filtered.json()] == [debt_id]
+            assert client.get("/api/tech-debt", params={"urgency": "low"}).json() == []
+            patched = client.patch(f"/api/tech-debt/{debt_id}", json={"status": "in-progress"})
+            assert patched.status_code == 200, patched.text
+            assert patched.json()["status"] == "in-progress"
+            resolved = client.patch(f"/api/tech-debt/{debt_id}", json={"status": "resolved"})
+            assert resolved.json()["resolved_at"] is not None
+            assert client.delete(f"/api/tech-debt/{debt_id}").status_code == 200
+            assert client.get("/api/tech-debt").json() == []
     finally:
         main.app.dependency_overrides.clear()
         test_engine.dispose()

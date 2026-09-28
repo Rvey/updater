@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  AlertTriangle,
   ArrowDownRight,
   ArrowLeft,
   ArrowRight,
@@ -35,6 +36,7 @@ import {
 } from "lucide-react";
 import type { ImpactNote, NewUpdate, Question, Update } from "./types";
 import { NotesView } from "./notes";
+import { TechDebtView } from "./techdebt";
 import { Button } from "./components/ui/button";
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || "";
@@ -294,7 +296,7 @@ function SetupModal({ close, serverToken }: { close: () => void; serverToken: st
             </button>
           ))}
         </div>
-        <p className='setup-verify'>One-step (recommended): MCP + <code>/updater</code>, <code>/updater-ship</code>, <code>/updater-check</code>, <code>/updater-impact</code></p>
+        <p className='setup-verify'>One-step (recommended): MCP + <code>/updater</code>, <code>/updater-ship</code>, <code>/updater-check</code>, <code>/updater-impact</code>, <code>/tech-depth</code></p>
         <div className='code-block'>
           <button aria-label='Copy one-step command' onClick={copyOne}>
             {copiedOne ? <Check size={15} /> : <Copy size={15} />}{' '}
@@ -329,7 +331,7 @@ function SetupModal({ close, serverToken }: { close: () => void; serverToken: st
         <div className="setup-tip">
           <Sparkles size={16} />
           <span>
-            One-step also installs <code>/updater</code> (bare ships the last verified changes, with args it does check, impact, or list), plus <code>/updater-ship</code>, <code>/updater-check</code> and <code>/updater-impact</code>, for opencode, codex, claude and Cursor. Run the installer bare for prompts (token, agents, scope).
+            One-step also installs <code>/updater</code> (bare ships the last verified changes, with args it does check, impact, or list), plus <code>/updater-ship</code>, <code>/updater-check</code>, <code>/updater-impact</code> and <code>/tech-depth</code>, for opencode, codex, claude and Cursor. Run the installer bare for prompts (token, agents, scope).
           </span>
         </div>
       </div>
@@ -1047,7 +1049,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [repo, setRepo] = useState("All updates");
-  const [view, setView] = useState<"updates" | "questions" | "notes">("updates");
+  const [view, setView] = useState<"updates" | "questions" | "notes" | "tech-debt">("updates");
   const [loading, setLoading] = useState(true);
   const [unauthorized, setUnauthorized] = useState(false);
   const [error, setError] = useState("");
@@ -1364,6 +1366,16 @@ export default function App() {
           >
             <StickyNote size={17} /> Notes
           </button>
+          <button
+            className={view === "tech-debt" ? "active" : ""}
+            onClick={() => {
+              setView("tech-debt");
+              setMobileNav(false);
+              setMobileDetail(false);
+            }}
+          >
+            <AlertTriangle size={17} /> Tech debt
+          </button>
         </nav>
         <div className="sidebar-section-heading">
           <span>REPOSITORIES</span>
@@ -1424,11 +1436,13 @@ export default function App() {
             <strong>
               {view === "notes"
                 ? "Notes"
-                : view === "questions"
-                  ? "Conversations"
-                  : repo === "All updates"
-                    ? "All updates"
-                    : repoName(repo)}
+                : view === "tech-debt"
+                  ? "Tech debt"
+                  : view === "questions"
+                    ? "Conversations"
+                    : repo === "All updates"
+                      ? "All updates"
+                      : repoName(repo)}
             </strong>
           </div>
           <div className="topbar-right">
@@ -1453,6 +1467,8 @@ export default function App() {
         <div className="workspace-body">
           {view === "notes" ? (
             <NotesView token={token} repos={repositories} />
+          ) : view === "tech-debt" ? (
+            <TechDebtView token={token} repos={repositories} />
           ) : (
             <>
           <section className="feed-panel">

@@ -46,6 +46,7 @@ Commands:
 - `updater-ship` → `publish_feature` (after verified work)
 - `updater-check` → `list_context_requests` + `fulfill_context_request`
 - `updater-impact` → `list_feature_updates` + `add_feature_impact`
+- `tech-depth` → scan for tech debt and rushed decisions, `report_tech_debt` per finding (scope, description, mitigation, urgency, impact, current state)
 
 ## Install (global, works in every repo)
 

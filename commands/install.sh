@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Updater one-step connect: adds the `updater` MCP server AND installs
-# /updater-ship, /updater-check, /updater-impact commands for each agent.
+# /updater-ship, /updater-check, /updater-impact, /tech-depth commands for each agent.
 # Compatible agents: opencode, codex, claude, cursor.
 #
 # Why this exists: `opencode mcp add` / `codex mcp add` / `claude mcp add`
@@ -633,6 +633,21 @@ Additional context: $ARGUMENTS
 2. Call `add_feature_impact` with ONE dated, measured observation (latency before/after, error rate, user feedback, adoption, bug caused). One real observation per call.
 3. Never rephrase the expected impact from publish time. If no matching update exists, say so.
 CMD_EOF
+  write_file "$base/tech-depth.md" <<'CMD_EOF'
+---
+description: Scan for tech debt and rushed decisions, report each to Updater
+---
+
+Hunt for tech debt and rushed decisions in this checkout, then report each finding to Updater.
+
+Additional context from user: $ARGUMENTS
+
+1. Scan local evidence (do not invent): git log, git diff, TODO/FIXME/HACK markers, duplicated logic, missing tests, fragile error handling, hardcoded values, oversized functions, temporary workarounds.
+2. Read the surrounding code for each candidate so the report is factual.
+3. Get repo_url from git remote get-url origin (HTTPS form), plus branch and commit_sha when available.
+4. For EACH finding call Updater MCP report_tech_debt once with title, scope, description, impact, mitigation, current_state, urgency (low/medium/high/critical), repo_url, file_path, files, tags, branch, commit_sha, author_agent.
+5. Report returned id/title/urgency. If MCP is unavailable, say findings were NOT recorded. Skip items already in list_tech_debt unless worse.
+CMD_EOF
   write_file "$base/updater.md" <<'CMD_EOF'
 ---
 description: Updater router - bare command ships last verified changes, or check, impact, list flows
@@ -704,6 +719,21 @@ Record a real-world outcome for a shipped feature in Updater.
 1. Call Updater MCP `list_feature_updates` to find the matching update (use `get_feature_update` for details if needed).
 2. Call `add_feature_impact` with ONE dated, measured observation. One real observation per call, never a rephrase of expected impact.
 CMD_EOF
+  write_file "$base/tech-depth.md" <<'CMD_EOF'
+---
+description: Scan for tech debt and rushed decisions, report each to Updater
+---
+
+Hunt for tech debt and rushed decisions in this checkout, then report each finding to Updater.
+
+1. Scan local evidence (do not invent): git log, git diff, TODO/FIXME/HACK markers, duplicated logic, missing tests, fragile error handling, hardcoded values, oversized functions, temporary workarounds.
+2. Read the surrounding code for each candidate so the report is factual.
+3. Get repo_url from git remote get-url origin (HTTPS form), plus branch and commit_sha when available.
+4. For EACH finding call the Updater MCP tool report_tech_debt once with title, scope, description, impact, mitigation, current_state, urgency (low/medium/high/critical), repo_url, file_path, files, tags, branch, commit_sha, author_agent.
+5. Report the returned id/title/urgency per item. If the MCP tool is unavailable, say the findings were NOT recorded.
+
+One call per finding (max 10 per run). Skip anything already listed via list_tech_debt for this repo unless it got worse.
+CMD_EOF
   write_file "$base/updater.md" <<'CMD_EOF'
 ---
 description: Updater router - bare command ships last verified changes, or check, impact, list flows
@@ -732,7 +762,7 @@ CMD_EOF
 
 install_codex() {
   if [ "$SCOPE" = "global" ]; then prompts="$HOME/.codex/prompts"; skills="$HOME/.codex/skills"; else prompts="$PROJECT_DIR/.codex/prompts"; skills="$PROJECT_DIR/.codex/skills"; fi
-  if [ "$DRY_RUN" != "1" ]; then mkdir -p "$prompts" "$skills/updater-ship" "$skills/updater-check" "$skills/updater-impact" "$skills/updater"; fi
+  if [ "$DRY_RUN" != "1" ]; then mkdir -p "$prompts" "$skills/updater-ship" "$skills/updater-check" "$skills/updater-impact" "$skills/updater" "$skills/tech-depth"; fi
   write_file "$prompts/updater-ship.md" <<'CMD_EOF'
 Publish the just-finished, verified work to Updater via MCP.
 
@@ -764,6 +794,17 @@ Extra user context: $@
 
 1. Call Updater MCP `list_feature_updates` to find the matching update (use `get_feature_update` for details).
 2. Call `add_feature_impact` with ONE dated, measured observation. One real observation per call, never rephrase expected impact.
+CMD_EOF
+  write_file "$prompts/tech-depth.md" <<'CMD_EOF'
+Hunt for tech debt and rushed decisions in this checkout, then report each finding to Updater.
+
+Extra user context: $@
+
+1. Scan local evidence (do not invent): git log, git diff, TODO/FIXME/HACK markers, duplicated logic, missing tests, fragile error handling, hardcoded values, oversized functions, temporary workarounds.
+2. Read surrounding code for each candidate.
+3. Get repo_url from git remote get-url origin (HTTPS), plus branch and commit_sha when available.
+4. For EACH finding call Updater MCP report_tech_debt with title, scope, description, impact, mitigation, current_state, urgency (low/medium/high/critical), repo_url, file_path, files, tags, branch, commit_sha, author_agent.
+5. Report returned id/title/urgency. If MCP is unavailable, say NOT recorded. Skip items already in list_tech_debt unless worse.
 CMD_EOF
   write_file "$skills/updater-ship/SKILL.md" <<'CMD_EOF'
 ---
@@ -800,6 +841,17 @@ description: Record real-world impact for a shipped Updater feature via add_feat
 
 1. Call `list_feature_updates` to find matching update (`get_feature_update` for details).
 2. Call `add_feature_impact` with ONE dated, measured observation. One per call, never rephrase expected impact.
+CMD_EOF
+  write_file "$skills/tech-depth/SKILL.md" <<'CMD_EOF'
+---
+name: tech-depth
+description: Scan the checkout for tech debt and rushed decisions, report each to Updater via report_tech_debt. Use when asked to run tech-depth.
+---
+
+1. Scan git log, git diff, TODO/FIXME/HACK markers, duplicated logic, missing tests, fragile error handling, hardcoded values, oversized functions, temporary workarounds. Read surrounding code; never invent.
+2. Get repo_url (HTTPS remote), branch, commit_sha when available.
+3. For EACH finding call Updater MCP report_tech_debt with title, scope, description, impact, mitigation, current_state, urgency (low/medium/high/critical), repo_url, file_path, files, tags, branch, commit_sha, author_agent.
+4. Report id/title/urgency. If unavailable, say NOT recorded. Skip items already in list_tech_debt unless worse.
 CMD_EOF
   write_file "$prompts/updater.md" <<'CMD_EOF'
 You are the Updater router. Updater MCP tools: publish_feature, list_context_requests, fulfill_context_request, list_feature_updates, get_feature_update, add_feature_impact.
@@ -879,6 +931,17 @@ Record a real-world outcome for a shipped feature in Updater.
 1. Call Updater MCP `list_feature_updates` to find the matching update (use `get_feature_update` for details if needed).
 2. Call `add_feature_impact` with ONE dated, measured observation. One real observation per call, never a rephrase of expected impact.
 CMD_EOF
+  write_file "$base/tech-depth.md" <<'CMD_EOF'
+# Tech depth - scan and report tech debt to Updater
+
+Hunt for tech debt and rushed decisions in this checkout, then report each finding to Updater.
+
+1. Scan local evidence (do not invent): git log, git diff, TODO/FIXME/HACK markers, duplicated logic, missing tests, fragile error handling, hardcoded values, oversized functions, temporary workarounds.
+2. Read surrounding code for each candidate.
+3. Get repo_url from git remote get-url origin (HTTPS), plus branch and commit when available.
+4. For EACH finding call Updater MCP report_tech_debt with title, scope, description, impact, mitigation, current_state, urgency (low/medium/high/critical), repo_url, file_path, files, tags, branch, commit_sha, author_agent.
+5. Report returned id/title/urgency. If MCP is unavailable, say NOT recorded. Skip items already in list_tech_debt unless worse.
+CMD_EOF
   write_file "$base/updater.md" <<'CMD_EOF'
 # Updater - ship last changes, check requests, record impact, or list
 
@@ -916,4 +979,4 @@ if [ "$SKIP_COMMANDS" != "1" ]; then
   wants claude && install_claude
   wants cursor && install_cursor
 else log "skip commands (--skip-commands)"; fi
-log "done. Verify: opencode/codex/claude mcp list, Cursor Settings -> MCP Tools (green dot), then /updater-ship"
+log "done. Verify: opencode/codex/claude mcp list, Cursor Settings -> MCP Tools (green dot), then /updater-ship or /tech-depth"

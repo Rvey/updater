@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from .config import get_settings
 from . import auth as auth_utils
-from .db import ApiKey, Base, ContextRequest, ImpactNote, Note, Question, SessionLocal, Update, User, UserSession, engine, get_db, now_utc
+from .db import ApiKey, Base, ContextRequest, ImpactNote, Note, Question, SessionLocal, TechDebt, Update, User, UserSession, engine, get_db, now_utc
 from .explain import explain_question
 from .mcp_server import create_mcp_server
 from .schemas import (
@@ -30,6 +30,11 @@ from .schemas import (
     NoteRead,
     NoteUpdate,
     QuestionCreate,
+    TECH_DEBT_STATUSES,
+    TECH_DEBT_URGENCIES,
+    TechDebtCreate,
+    TechDebtRead,
+    TechDebtUpdate,
     ApiKeyCreate,
     ApiKeyCreated,
     ApiKeyRead,
@@ -484,6 +489,147 @@ def delete_note(note_id: str, db: Session = Depends(get_db)):
     entry = db.get(Note, note_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Note not found")
+    db.delete(entry)
+    db.commit()
+    return {"ok": True}
+
+
+def _normalize_tech_debt_urgency(value: str | None) -> str:
+    urgency = (value or "medium").strip().lower()
+    if urgency not in TECH_DEBT_URGENCIES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid urgency. Choose one of: {', '.join(TECH_DEBT_URGENCIES)}",
+        )
+    return urgency
+
+
+def _normalize_tech_debt_status(value: str | None) -> str:
+    normalized = (value or "open").strip().lower().replace("_", "-")
+    if normalized not in TECH_DEBT_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid status. Choose one of: {', '.join(TECH_DEBT_STATUSES)}",
+        )
+    return normalized
+
+
+@app.get("/api/tech-debt", response_model=list[TechDebtRead], dependencies=[Depends(require_token)])
+def list_tech_debt(
+    q: str = Query(default="", max_length=200),
+    repo: str = Query(default="", max_length=600),
+    urgency: str = Query(default="", max_length=20),
+    status: str = Query(default="", max_length=20),
+    db: Session = Depends(get_db),
+) -> list[TechDebt]:
+    query = select(TechDebt).order_by(TechDebt.created_at.desc())
+    if q.strip():
+        term = f"%{q.strip()}%"
+        query = query.where(
+            or_(
+                TechDebt.title.ilike(term),
+                TechDebt.scope.ilike(term),
+                TechDebt.description.ilike(term),
+                TechDebt.file_path.ilike(term),
+            )
+        )
+    if urgency.strip():
+        query = query.where(TechDebt.urgency == urgency.strip().lower())
+    if status.strip():
+        query = query.where(TechDebt.status == status.strip().lower().replace("_", "-"))
+    items = list(db.scalars(query).all())
+    if repo.strip():
+        wanted = _normalize_repo_url(repo)
+        items = [t for t in items if _normalize_repo_url(t.repo_url) == wanted]
+    return items
+
+
+@app.post("/api/tech-debt", response_model=TechDebtRead, status_code=201, dependencies=[Depends(require_token)])
+def create_tech_debt(payload: TechDebtCreate, db: Session = Depends(get_db)) -> TechDebt:
+    urgency = _normalize_tech_debt_urgency(payload.urgency)
+    status_value = _normalize_tech_debt_status(payload.status)
+    entry = TechDebt(
+        title=payload.title.strip(),
+        scope=payload.scope.strip(),
+        description=payload.description.strip(),
+        impact=payload.impact.strip(),
+        mitigation=payload.mitigation.strip(),
+        current_state=payload.current_state.strip(),
+        urgency=urgency,
+        status=status_value,
+        repo_url=str(payload.repo_url),
+        file_path=(payload.file_path or "").strip() or None,
+        files=[str(f).strip()[:300] for f in (payload.files or []) if str(f).strip()][:20],
+        tags=[str(t).strip().lower().replace(" ", "-")[:40] for t in (payload.tags or []) if str(t).strip()][:20],
+        branch=(payload.branch or "").strip() or None,
+        commit_sha=(payload.commit_sha or "").strip() or None,
+        author_agent=(payload.author_agent or "").strip() or None,
+    )
+    if status_value in ("resolved", "wont-fix"):
+        entry.resolved_at = now_utc()
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+@app.get("/api/tech-debt/{debt_id}", response_model=TechDebtRead, dependencies=[Depends(require_token)])
+def get_tech_debt(debt_id: str, db: Session = Depends(get_db)) -> TechDebt:
+    entry = db.get(TechDebt, debt_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Tech debt item not found")
+    return entry
+
+
+@app.patch("/api/tech-debt/{debt_id}", response_model=TechDebtRead, dependencies=[Depends(require_token)])
+def update_tech_debt(debt_id: str, payload: TechDebtUpdate, db: Session = Depends(get_db)) -> TechDebt:
+    entry = db.get(TechDebt, debt_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Tech debt item not found")
+    if payload.title is not None:
+        entry.title = payload.title.strip()
+    if payload.scope is not None:
+        entry.scope = payload.scope.strip()
+    if payload.description is not None:
+        entry.description = payload.description.strip()
+    if payload.impact is not None:
+        entry.impact = payload.impact.strip()
+    if payload.mitigation is not None:
+        entry.mitigation = payload.mitigation.strip()
+    if payload.current_state is not None:
+        entry.current_state = payload.current_state.strip()
+    if payload.urgency is not None:
+        entry.urgency = _normalize_tech_debt_urgency(payload.urgency)
+    if payload.status is not None:
+        entry.status = _normalize_tech_debt_status(payload.status)
+        if entry.status in ("resolved", "wont-fix"):
+            entry.resolved_at = entry.resolved_at or now_utc()
+        else:
+            entry.resolved_at = None
+    if payload.file_path is not None:
+        raw = (payload.file_path or "").strip()
+        entry.file_path = raw or None
+    if payload.files is not None:
+        entry.files = [str(f).strip()[:300] for f in payload.files if str(f).strip()][:20]
+    if payload.tags is not None:
+        entry.tags = [str(t).strip().lower().replace(" ", "-")[:40] for t in payload.tags if str(t).strip()][:20]
+    if payload.branch is not None:
+        raw_branch = (payload.branch or "").strip()
+        entry.branch = raw_branch or None
+    if payload.commit_sha is not None:
+        raw_commit = (payload.commit_sha or "").strip()
+        entry.commit_sha = raw_commit or None
+    entry.updated_at = now_utc()
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+@app.delete("/api/tech-debt/{debt_id}", dependencies=[Depends(require_token)])
+def delete_tech_debt(debt_id: str, db: Session = Depends(get_db)):
+    entry = db.get(TechDebt, debt_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Tech debt item not found")
     db.delete(entry)
     db.commit()
     return {"ok": True}

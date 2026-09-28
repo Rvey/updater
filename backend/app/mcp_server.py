@@ -135,6 +135,107 @@ async def add_feature_impact(update_id: str, observation: str) -> dict[str, Any]
     return await api_request("POST", f"/api/updates/{update_id}/impact-notes", {"note": observation})
 
 
+async def report_tech_debt(
+    title: str,
+    scope: str,
+    description: str,
+    mitigation: str,
+    urgency: str,
+    impact: str,
+    current_state: str,
+    repo_url: str,
+    file_path: str = "",
+    files: list[str] | None = None,
+    tags: list[str] | None = None,
+    branch: str = "",
+    commit_sha: str = "",
+    author_agent: str = "",
+) -> dict[str, Any]:
+    """Report one tech-debt item or rushed decision found in the codebase.
+
+    Call once per finding when running /tech-depth: scan TODO/FIXME/HACK markers,
+    shortcuts, duplicated logic, missing tests, fragile error handling, hardcoded
+    values, and anything that was rushed to ship. Use facts from local files and
+    git history; never invent details.
+    Required fields: title (short), scope (module/area), description (what the
+    debt is), mitigation (how to fix it properly), urgency (low/medium/high/
+    critical), impact (effect on the current code), current_state (what is solved
+    or covered right now, e.g. workaround, passing tests), repo_url (HTTPS remote).
+    Optional: file_path (primary file), files (related paths), tags, branch,
+    commit_sha, author_agent.
+    """
+    result = await api_request(
+        "POST",
+        "/api/tech-debt",
+        {
+            "title": title,
+            "scope": scope,
+            "description": description,
+            "mitigation": mitigation,
+            "urgency": urgency,
+            "impact": impact,
+            "current_state": current_state,
+            "repo_url": repo_url,
+            "file_path": file_path or None,
+            "files": files or [],
+            "tags": tags or [],
+            "branch": branch or None,
+            "commit_sha": commit_sha or None,
+            "author_agent": author_agent or None,
+        },
+    )
+    return {"id": result["id"], "title": result["title"], "urgency": result["urgency"], "status": result["status"]}
+
+
+async def list_tech_debt(query: str = "", repo: str = "", urgency: str = "", status: str = "") -> list[dict[str, Any]]:
+    """List reported tech-debt items, optionally filtered by search, repo, urgency, or status."""
+    from urllib.parse import urlencode
+
+    result = await api_request(
+        "GET",
+        f"/api/tech-debt?{urlencode({'q': query, 'repo': repo, 'urgency': urgency, 'status': status})}",
+    )
+    return [
+        {
+            "id": item["id"],
+            "title": item["title"],
+            "scope": item["scope"],
+            "urgency": item["urgency"],
+            "status": item["status"],
+            "repo_url": item["repo_url"],
+        }
+        for item in result
+    ]
+
+
+async def get_tech_debt(debt_id: str) -> dict[str, Any]:
+    """Read one tech-debt item with scope, description, mitigation, urgency, impact, and current state."""
+    return await api_request("GET", f"/api/tech-debt/{debt_id}")
+
+
+async def update_tech_debt(
+    debt_id: str,
+    status: str = "",
+    urgency: str = "",
+    mitigation: str = "",
+    current_state: str = "",
+) -> dict[str, Any]:
+    """Update a tech-debt item (status open/in-progress/resolved/wont-fix, urgency, mitigation, current state).
+
+    Pass only the fields that change; empty strings are ignored.
+    """
+    payload: dict[str, Any] = {}
+    if status.strip():
+        payload["status"] = status.strip()
+    if urgency.strip():
+        payload["urgency"] = urgency.strip()
+    if mitigation.strip():
+        payload["mitigation"] = mitigation.strip()
+    if current_state.strip():
+        payload["current_state"] = current_state.strip()
+    return await api_request("PATCH", f"/api/tech-debt/{debt_id}", payload)
+
+
 def _expand_allowed_hosts(entries: list[str]) -> list[str]:
     """Expand bare hostnames so both `host` and `host:*` match.
 
@@ -195,7 +296,10 @@ def create_mcp_server() -> FastMCP:
             "Use facts from the code and task; never invent details. "
             "You are also the codebase proxy and impact tracker: poll list_context_requests for this repo "
             "and fulfill pending questions with short local file excerpts, and record real-world outcomes "
-            "with add_feature_impact when you learn what a shipped feature changed in practice."
+            "with add_feature_impact when you learn what a shipped feature changed in practice. "
+            "You are also the tech-debt scanner: when asked to run /tech-depth, hunt for tech debt and "
+            "rushed decisions and report each finding with report_tech_debt (scope, description, mitigation, "
+            "urgency, impact, current state)."
         ),
         streamable_http_path="/mcp",
         stateless_http=True,
@@ -206,7 +310,7 @@ def create_mcp_server() -> FastMCP:
             allowed_origins=allowed_origins,
         ),
     )
-    for tool in (publish_feature, list_feature_updates, get_feature_update, add_feature_impact, list_context_requests, fulfill_context_request):
+    for tool in (publish_feature, list_feature_updates, get_feature_update, add_feature_impact, list_context_requests, fulfill_context_request, report_tech_debt, list_tech_debt, get_tech_debt, update_tech_debt):
         server.add_tool(tool)
     return server
 
