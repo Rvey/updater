@@ -38,6 +38,7 @@ import type { ImpactNote, NewUpdate, Question, Update } from "./types";
 import { NotesView } from "./notes";
 import { TechDebtView } from "./techdebt";
 import { Button } from "./components/ui/button";
+import Homepage from "./marketing/Homepage";
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || "";
 
@@ -1305,7 +1306,7 @@ function KeysModal({ close, token }: { close: () => void; token: string }) {
 }
 
 
-export default function App() {
+function WorkspaceApp() {
   const [token, setToken] = useState(
     () => sessionStorage.getItem("updater-token") || "",
   );
@@ -1980,4 +1981,34 @@ export default function App() {
       )}
     </div>
   );
+}
+
+function isWorkspacePath(): boolean {
+  try {
+    const path = window.location.pathname || "/";
+    if (path === "/app" || path.startsWith("/app/")) return true;
+    if (path === "/workspace" || path.startsWith("/workspace/")) return true;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("view") === "workspace" || params.get("view") === "app") return true;
+    if (window.location.hash === "#/app" || window.location.hash.startsWith("#/workspace")) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export default function App() {
+  const [workspace] = useState<boolean>(() => isWorkspacePath());
+  useEffect(() => {
+    const onPop = () => {
+      try {
+        // reload route on back/forward so marketing <-> workspace switch cleanly
+        window.location.reload();
+      } catch { /* ignore */ }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  if (!workspace) return <Homepage />;
+  return <WorkspaceApp />;
 }
