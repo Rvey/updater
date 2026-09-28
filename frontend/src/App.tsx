@@ -13,7 +13,6 @@ import {
   ChevronUp,
   CircleHelp,
   Code2,
-  Command,
   Copy,
   FileCode2,
   GitBranch,
@@ -21,7 +20,6 @@ import {
   Github,
   Inbox,
   LockKeyhole,
-  KeyRound,
   LogOut,
   Menu,
   MessageCircle,
@@ -37,6 +35,8 @@ import {
 import type { ImpactNote, NewUpdate, Question, Update } from "./types";
 import { NotesView } from "./notes";
 import { TechDebtView } from "./techdebt";
+import { SettingsView } from "./settings";
+import type { SettingsSection } from "./settings";
 import { Button } from "./components/ui/button";
 import Homepage from "./marketing/Homepage";
 
@@ -234,171 +234,6 @@ function InfoSection({
         <div className="section-body">{children}</div>
       </div>
     </section>
-  );
-}
-
-function shellQuote(value: string) {
-  return "'" + value.replace(/'/g, "'\''") + "'";
-}
-
-function SetupModal({ close, serverToken }: { close: () => void; serverToken: string }) {
-  const tokenConfigured = Boolean(serverToken);
-  const [copied, setCopied] = useState(false);
-  const [copiedOne, setCopiedOne] = useState(false);
-  const [copyError, setCopyError] = useState(false);
-  const [tab, setTab] = useState<"opencode" | "codex" | "claude">("opencode");
-  const [secured, setSecured] = useState(tokenConfigured);
-  const [embedToken, setEmbedToken] = useState(tokenConfigured);
-  const defaultOrigin = apiBase || (window.location.port === "5173"
-    ? `${window.location.protocol}//${window.location.hostname}:8000`
-    : window.location.origin);
-  const [mcpUrl, setMcpUrl] = useState(new URL("/mcp", defaultOrigin).href);
-  const useEmbedded = secured && embedToken && serverToken.length > 0;
-  const commands = {
-    opencode: `opencode mcp add updater --global --url ${mcpUrl}${secured ? (useEmbedded ? ` --header ${shellQuote("Authorization=Bearer " + serverToken)}` : ' --header "Authorization=Bearer {env:UPDATER_TOKEN}"') : ""}`,
-    codex: `codex mcp add updater --url ${mcpUrl}${secured ? (useEmbedded ? ` --bearer-token ${shellQuote(serverToken)}` : " --bearer-token-env-var UPDATER_TOKEN") : ""}`,
-    claude: `claude mcp add --transport http --scope user updater ${mcpUrl}${secured ? (useEmbedded ? ` --header ${shellQuote("Authorization: Bearer " + serverToken)}` : ' --header "Authorization: Bearer $UPDATER_TOKEN"') : ""}`,
-  };
-  const verify = {
-    opencode: "opencode mcp list",
-    codex: "codex mcp list",
-    claude: "claude mcp list",
-  };
-  const connectUrl = new URL('/connect.sh', defaultOrigin).href;
-  const oneStep = {
-    opencode: 'curl -fsSL ' + connectUrl + ' | bash -s -- --url ' + mcpUrl + ' --agents opencode' + (useEmbedded ? ' --token ' + shellQuote(serverToken) : ''),
-    codex: 'curl -fsSL ' + connectUrl + ' | bash -s -- --url ' + mcpUrl + ' --agents codex' + (useEmbedded ? ' --token ' + shellQuote(serverToken) : ''),
-    claude: 'curl -fsSL ' + connectUrl + ' | bash -s -- --url ' + mcpUrl + ' --agents claude' + (useEmbedded ? ' --token ' + shellQuote(serverToken) : ''),
-  };
-  const oneStepAll = 'curl -fsSL ' + connectUrl + ' | bash -s -- --url ' + mcpUrl + ' --agents all' + (useEmbedded ? ' --token ' + shellQuote(serverToken) : '');
-  const copy = async () => {
-    setCopyError(false);
-    const field = document.createElement("textarea");
-    field.value = commands[tab];
-    field.style.position = "fixed";
-    field.style.opacity = "0";
-    document.body.appendChild(field);
-    field.select();
-    const copiedWithSelection = document.execCommand("copy");
-    field.remove();
-    if (!copiedWithSelection) {
-      try {
-        await Promise.race([
-          navigator.clipboard.writeText(commands[tab]),
-          new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("Clipboard unavailable")), 1000)),
-        ]);
-      } catch {
-        setCopyError(true);
-        return;
-      }
-    }
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1800);
-  };
-  const copyOne = async () => {
-    setCopyError(false);
-    try {
-      await navigator.clipboard.writeText(oneStep[tab]);
-    } catch {
-      setCopyError(true);
-      return;
-    }
-    setCopiedOne(true);
-    window.setTimeout(() => setCopiedOne(false), 1800);
-  };
-  return (
-    <div className="modal-backdrop" onMouseDown={close}>
-      <div
-        className="modal setup-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Connect an agent"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <button
-          className="icon-button modal-close"
-          aria-label="Close"
-          onClick={close}
-        >
-          <X size={18} />
-        </button>
-        <div className="modal-icon">
-          <Command size={22} />
-        </div>
-        <h2>Connect your coding agent</h2>
-        <p className="modal-intro">
-          Run one command in your terminal. Your agent can then publish and read
-          feature updates through Updater.
-        </p>
-        <label className="setup-field">
-          MCP server URL
-          <input type="url" value={mcpUrl} onChange={(event) => setMcpUrl(event.target.value)} spellCheck={false} />
-        </label>
-        <label className="setup-check">
-          <input type="checkbox" checked={secured} onChange={(event) => setSecured(event.target.checked)} />
-          My server requires an Updater token
-        </label>
-        {secured && serverToken && (
-          <label className="setup-check">
-            <input type="checkbox" checked={embedToken} onChange={(event) => setEmbedToken(event.target.checked)} />
-            Insert my current token directly (copy-paste ready)
-          </label>
-        )}
-        <div className="setup-tabs">
-          {(["opencode", "codex", "claude"] as const).map((item) => (
-            <button
-              key={item}
-              className={tab === item ? "active" : ""}
-              onClick={() => setTab(item)}
-            >
-              {item === "codex"
-                ? "Codex"
-                : item === "claude"
-                  ? "Claude Code"
-                  : "OpenCode"}
-            </button>
-          ))}
-        </div>
-        <p className='setup-verify'>One-step (recommended): MCP + <code>/updater</code>, <code>/updater-ship</code>, <code>/updater-check</code>, <code>/updater-impact</code>, <code>/tech-depth</code></p>
-        <div className='code-block'>
-          <button aria-label='Copy one-step command' onClick={copyOne}>
-            {copiedOne ? <Check size={15} /> : <Copy size={15} />}{' '}
-            {copiedOne ? 'Copied' : 'Copy'}
-          </button>
-          <pre>{oneStep[tab]}</pre>
-        </div>
-        <p className='setup-verify'>All agents at once (copy manually): <code>{oneStepAll}</code></p>
-        <p className='setup-verify'>Manual (MCP only):</p>
-        <div className="code-block">
-          <button aria-label="Copy command" onClick={copy}>
-            {copied ? <Check size={15} /> : <Copy size={15} />}{" "}
-            {copied ? "Copied" : "Copy"}
-          </button>
-          <pre>{commands[tab]}</pre>
-        </div>
-        {copyError && <p className="setup-token-note">Copy was blocked by the browser. Select the command above to copy it.</p>}
-        <p className="setup-verify">Check connection: <code>{verify[tab]}</code></p>
-        {useEmbedded ? (
-          <p className="setup-token-note">
-            This command contains your secret token. Anyone with it can access your workspace. It will also be saved in your shell history
-            (and in Claude Code's MCP settings file). Untick the box above for the safer env-var version.
-          </p>
-        ) : (
-          secured && (
-            <p className="setup-token-note">
-              Set <code>UPDATER_TOKEN</code> in the terminal before running the command and launching the agent. Claude Code saves the expanded
-              authorization header in its user MCP settings.
-            </p>
-          )
-        )}
-        <div className="setup-tip">
-          <Sparkles size={16} />
-          <span>
-            One-step also installs <code>/updater</code> (bare ships the last verified changes, with args it does check, impact, or list), plus <code>/updater-ship</code>, <code>/updater-check</code>, <code>/updater-impact</code> and <code>/tech-depth</code>, for opencode, codex, claude and Cursor. Run the installer bare for prompts (token, agents, scope).
-          </span>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -1160,157 +995,6 @@ function UpdateDetail({
   );
 }
 
-type ApiKeyInfo = {
-  id: string;
-  name: string;
-  prefix: string;
-  created_at: string;
-  last_used_at: string | null;
-  revoked_at: string | null;
-};
-
-function KeysModal({ close, token }: { close: () => void; token: string }) {
-  const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
-  const [name, setName] = useState("agent key");
-  const [created, setCreated] = useState<{ name: string; key: string } | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [copiedKey, setCopiedKey] = useState(false);
-  const [copyError, setCopyError] = useState(false);
-
-  useEffect(() => {
-    request<ApiKeyInfo[]>("/auth/keys", token)
-      .then(setKeys)
-      .catch((err) => setError(err.message));
-  }, [token]);
-
-  const create = (event: FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    setCopyError(false);
-    setCopiedKey(false);
-    request<{ id: string; name: string; prefix: string; key: string }>("/auth/keys", token, {
-      method: "POST",
-      body: JSON.stringify({ name }),
-    })
-      .then((item) => {
-        setCreated({ name: item.name, key: item.key });
-        return request<ApiKeyInfo[]>("/auth/keys", token);
-      })
-      .then(setKeys)
-      .catch((err) => setError(err.message))
-      .finally(() => setBusy(false));
-  };
-
-  const copyCreated = async () => {
-    if (!created) return;
-    setCopyError(false);
-    try {
-      await navigator.clipboard.writeText(created.key);
-    } catch {
-      try {
-        const field = document.createElement("textarea");
-        field.value = created.key;
-        field.style.position = "fixed";
-        field.style.opacity = "0";
-        document.body.appendChild(field);
-        field.select();
-        const ok = document.execCommand("copy");
-        field.remove();
-        if (!ok) throw new Error("copy failed");
-      } catch {
-        setCopyError(true);
-        return;
-      }
-    }
-    setCopiedKey(true);
-    window.setTimeout(() => setCopiedKey(false), 1800);
-  };
-
-  const revoke = (id: string) => {
-    request<{ ok: boolean }>(`/auth/keys/${id}`, token, { method: "DELETE" })
-      .then(() =>
-        setKeys((current) =>
-          current.map((item) =>
-            item.id === id ? { ...item, revoked_at: new Date().toISOString() } : item,
-          ),
-        ),
-      )
-      .catch((err) => setError(err.message));
-  };
-
-  return (
-    <div className="modal-backdrop" onMouseDown={close}>
-      <div
-        className="modal setup-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="API keys"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <button
-          className="icon-button modal-close"
-          aria-label="Close"
-          onClick={close}
-        >
-          <X size={18} />
-        </button>
-        <div className="modal-icon">
-          <KeyRound size={22} />
-        </div>
-        <h2>API keys</h2>
-        <p className="modal-intro">
-          Keys sign in your coding agents over MCP and HTTP. Treat a key like a password: keep it in an env var, never in git.
-        </p>
-        {created && (
-          <div className="code-block">
-            <button aria-label="Copy API key" onClick={copyCreated}>
-              {copiedKey ? <Check size={15} /> : <Copy size={15} />}{" "}
-              {copiedKey ? "Copied" : "Copy"}
-            </button>
-            <pre>{created.key}</pre>
-          </div>
-        )}
-        {created && (
-          <p className="setup-token-note">
-            Copy it now in a safe place. This is the only time the full key is shown.
-          </p>
-        )}
-        {created && copyError && (
-          <p className="setup-token-note">Copy was blocked by the browser. Select the key above to copy it.</p>
-        )}
-        <form onSubmit={create}>
-          <label className="setup-field">
-            New key name
-            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} />
-          </label>
-          <Button type="submit" className="button primary" disabled={busy}>
-            {busy ? "Creating…" : "Create key"}
-          </Button>
-        </form>
-        {keys.map((item) => (
-          <div key={item.id} className="code-block">
-            {item.revoked_at ? (
-              <button aria-label="Key revoked" disabled>
-                Revoked
-              </button>
-            ) : (
-              <button aria-label="Revoke key" onClick={() => revoke(item.id)}>
-                Revoke
-              </button>
-            )}
-            <pre>{item.name}  {item.prefix}…{item.last_used_at ? "  last used " + item.last_used_at.slice(0, 10) : "  never used"}{item.revoked_at ? "  REVOKED" : ""}</pre>
-          </div>
-        ))}
-        {!keys.length && !error && <p className="setup-token-note">No keys yet.</p>}
-        {error && <div className="form-error">{error}</div>}
-      </div>
-    </div>
-  );
-}
-
-
 function WorkspaceApp() {
   const [token, setToken] = useState(
     () => sessionStorage.getItem("updater-token") || "",
@@ -1322,17 +1006,16 @@ function WorkspaceApp() {
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [accountEmail, setAccountEmail] = useState<string | null>(null);
-  const [keysOpen, setKeysOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("keys");
   const [updates, setUpdates] = useState<Update[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [updatesPage, setUpdatesPage] = useState(1);
   const [repo, setRepo] = useState("All updates");
-  const [view, setView] = useState<"updates" | "questions" | "notes" | "tech-debt">("updates");
+  const [view, setView] = useState<"updates" | "questions" | "notes" | "tech-debt" | "settings">("updates");
   const [loading, setLoading] = useState(true);
   const [unauthorized, setUnauthorized] = useState(false);
   const [error, setError] = useState("");
-  const [setupOpen, setSetupOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mobileDetail, setMobileDetail] = useState(false);
@@ -1395,6 +1078,22 @@ function WorkspaceApp() {
       .then((info) => setAccountEmail(info.legacy ? null : info.email))
       .catch(() => setAccountEmail(null));
   }, [token]);
+
+  useEffect(() => {
+    // Refresh the ship log when "Connected agents" opens so the agent list is current.
+    if (!token || view !== "settings" || settingsSection !== "agents") return;
+    let cancelled = false;
+    request<Update[]>("/updates?limit=500&offset=0", token)
+      .then((items) => {
+        if (!cancelled) setUpdates(items);
+      })
+      .catch(() => {
+        /* keep the last snapshot */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, view, settingsSection]);
 
   const repositories = useMemo(
     () => [...new Set(updates.map((item) => item.repo_url))],
@@ -1470,6 +1169,12 @@ function WorkspaceApp() {
   const chooseRepo = (value: string) => {
     setRepo(value);
     setView("updates");
+    setMobileNav(false);
+    setMobileDetail(false);
+  };
+  const openSettings = (section: SettingsSection) => {
+    setSettingsSection(section);
+    setView("settings");
     setMobileNav(false);
     setMobileDetail(false);
   };
@@ -1690,20 +1395,10 @@ function WorkspaceApp() {
         <div className="sidebar-bottom">
           <div className="sidebar-rule" />
           <button
-            onClick={() => {
-              setSetupOpen(true);
-              setMobileNav(false);
-            }}
+            className={view === "settings" ? "active" : ""}
+            onClick={() => openSettings("keys")}
           >
-            <Settings2 size={17} /> Connect an agent <ArrowUpRight size={15} />
-          </button>
-          <button
-            onClick={() => {
-              setKeysOpen(true);
-              setMobileNav(false);
-            }}
-          >
-            <KeyRound size={17} /> API keys
+            <Settings2 size={17} /> Settings <ArrowUpRight size={15} />
           </button>
           <button onClick={signOut}>
             <LogOut size={17} /> {accountEmail ? "Sign out (" + accountEmail + ")" : "Sign out"}
@@ -1727,13 +1422,15 @@ function WorkspaceApp() {
             <strong>
               {view === "notes"
                 ? "Notes"
-                : view === "tech-debt"
-                  ? "Tech debt"
-                  : view === "questions"
-                    ? "Conversations"
-                    : repo === "All updates"
-                      ? "All updates"
-                      : repoName(repo)}
+                : view === "settings"
+                  ? "Settings"
+                  : view === "tech-debt"
+                    ? "Tech debt"
+                    : view === "questions"
+                      ? "Conversations"
+                      : repo === "All updates"
+                        ? "All updates"
+                        : repoName(repo)}
             </strong>
           </div>
           <div className="topbar-right">
@@ -1760,6 +1457,15 @@ function WorkspaceApp() {
             <NotesView token={token} repos={repositories} />
           ) : view === "tech-debt" ? (
             <TechDebtView token={token} repos={repositories} />
+          ) : view === "settings" ? (
+            <SettingsView
+              token={token}
+              email={accountEmail}
+              updates={updates}
+              section={settingsSection}
+              onSectionChange={setSettingsSection}
+              onEmailChange={setAccountEmail}
+            />
           ) : (
             <>
           <section className="feed-panel">
@@ -1880,7 +1586,7 @@ function WorkspaceApp() {
                 ))
               ) : updates.length === 0 ? (
                 <EmptyState
-                  onSetup={() => setSetupOpen(true)}
+                  onSetup={() => openSettings("agents")}
                   onNew={() => setNewOpen(true)}
                 />
               ) : (
@@ -1975,8 +1681,6 @@ function WorkspaceApp() {
           )}
         </div>
       </main>
-      {setupOpen && <SetupModal close={() => setSetupOpen(false)} serverToken={token} />}
-      {keysOpen && <KeysModal close={() => setKeysOpen(false)} token={token} />}
       {newOpen && (
         <NewModal
           close={() => setNewOpen(false)}

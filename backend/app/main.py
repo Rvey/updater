@@ -39,6 +39,7 @@ from .schemas import (
     ApiKeyCreate,
     ApiKeyCreated,
     ApiKeyRead,
+    AccountUpdate,
     AuthResponse,
     LoginRequest,
     QuestionRead,
@@ -855,6 +856,70 @@ def me(authorization: str | None = Header(default=None), db: Session = Depends(g
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid or missing token")
     return {"email": user.email, "legacy": False}
+
+
+@app.patch("/api/auth/account")
+def update_account(
+    payload: AccountUpdate,
+    user: User = Depends(_current_user),
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Update the signed-in account: email, password, or both.
+
+    The current password is always required. Changing the password revokes every
+    other login session; the session used for this request stays signed in.
+    """
+    if not auth_utils.verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    if payload.email is None and not payload.new_password:
+        raise HTTPException(status_code=422, detail="Enter a new email or a new password")
+
+    email_changed = False
+    if payload.email is not None:
+        email = auth_utils.normalize_email(payload.email)
+        if "@" not in email or "." not in email.split("@")[-1]:
+            raise HTTPException(status_code=422, detail="Enter a valid email address")
+        if email != user.email:
+            existing = db.scalar(select(User).where(User.email == email, User.id != user.id))
+            if existing is not None:
+                raise HTTPException(status_code=409, detail="An account with this email already exists")
+            user.email = email
+            email_changed = True
+
+    password_changed = False
+    sessions_revoked = 0
+    if payload.new_password:
+        if auth_utils.verify_password(payload.new_password, user.password_hash):
+            raise HTTPException(status_code=422, detail="New password must be different from the current one")
+        user.password_hash = auth_utils.hash_password(payload.new_password)
+        password_changed = True
+        current = _bearer_value(authorization)
+        keep_digest = (
+            auth_utils.sha256_hex(current)
+            if current.startswith(auth_utils.SESSION_PREFIX)
+            else None
+        )
+        for session in db.scalars(select(UserSession).where(UserSession.user_id == user.id)):
+            if keep_digest is not None and session.token_hash == keep_digest:
+                continue
+            db.delete(session)
+            sessions_revoked += 1
+
+    if email_changed or password_changed:
+        try:
+            db.commit()
+        except IntegrityError as err:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="An account with this email already exists") from err
+        db.refresh(user)
+
+    return {
+        "email": user.email,
+        "email_changed": email_changed,
+        "password_changed": password_changed,
+        "sessions_revoked": sessions_revoked,
+    }
 
 
 @app.get("/api/auth/keys", response_model=list[ApiKeyRead])

@@ -242,6 +242,10 @@ a {
 .sidebar-bottom button:hover {
   background: #eeefea;
 }
+.sidebar-bottom button.active {
+  background: #eeefea;
+  color: #252821;
+}
 .sidebar-bottom button svg:last-child {
   margin-left: auto;
 }
@@ -1920,6 +1924,10 @@ a {
 }
 .dark .sidebar-bottom button:hover {
   background: #262626;
+}
+.dark .sidebar-bottom button.active {
+  background: #262626;
+  color: #e8ece3;
 }
 .dark .sidebar-foot {
   color: #6f766c;

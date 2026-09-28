@@ -28,7 +28,7 @@ Connect an agent to the deployed version:
 curl -fsSL https://updaterapi.blitzgo.io/connect.sh | bash
 ```
 
-It prompts for your API key (`upk_…` from the web UI sidebar → API keys), then lets you pick agents (one or many). No `--url` / `--agents` flags needed — the script already defaults to this server.
+It prompts for your API key (`upk_…` from the web UI **Settings → API keys**), then lets you pick agents (one or many). No `--url` / `--agents` flags needed — the script already defaults to this server.
 
 ## Screenshots
 
@@ -66,7 +66,7 @@ Run one CLI command and your agent can publish and read updates through MCP. No 
 - **Q&A per update** — ask questions inside the update; answers stay attached to the decision.
 - **Manual add** — capture an update from the UI when no agent was involved.
 - **MCP server** — `publish_feature`, `list_feature_updates`, `get_feature_update`, `add_feature_impact`, `report_tech_debt`, `list_tech_debt`, `get_tech_debt`, `update_tech_debt` over Streamable HTTP at `/mcp` (stdio fallback included).
-- **Auth** — log in with email + password and issue per-agent API keys (`upk_…`), or keep the single `UPDATER_TOKEN` env secret. Either unlocks the API + MCP.
+- **Auth + settings page** — log in with email + password, update your email or change your password in Settings (other sessions are signed out), and issue per-agent API keys (`upk_…`). Or keep the single `UPDATER_TOKEN` env secret. Either unlocks the API + MCP.
 - **Postgres in prod, SQLite locally** — zero-config local preview, persistent deployment with `DATABASE_URL`.
 - **Dokploy-ready** — separate `web` + `api` services in `compose.dokploy.yml`.
 
@@ -107,7 +107,7 @@ Open <http://localhost:5173>. Without a `.env` file the API creates `backend/upd
 
 ## Connect an agent
 
-One command sets up everything — MCP access plus the `/updater`, `/updater-ship`, `/updater-check`, `/updater-impact`, `/tech-depth` commands — for opencode, codex, Claude Code, and Cursor. It prompts for your API key, then lets you pick agents (one or many). (The in-app **Connect an agent** dialog builds the same command for any URL.)
+One command sets up everything — MCP access plus the `/updater`, `/updater-ship`, `/updater-check`, `/updater-impact`, `/tech-depth` commands — for opencode, codex, Claude Code, and Cursor. It prompts for your API key, then lets you pick agents (one or many). (The in-app **Settings → Connected agents** section builds the same command for any URL.)
 
 Deployed version:
 
@@ -133,7 +133,7 @@ If `UPDATER_TOKEN` is set on the API, export it where you launch the agent befor
 export UPDATER_TOKEN='your-long-random-secret'
 ```
 
-Prefer per-agent credentials: sign in to the web UI, open **API keys** in the sidebar, and create a key per agent. A key (`upk_…`) works anywhere the token does — `Authorization: Bearer upk_…` — and can be revoked individually without touching other agents.
+Prefer per-agent credentials: sign in to the web UI, open **Settings → API keys**, and create a key per agent. A key (`upk_…`) works anywhere the token does — `Authorization: Bearer upk_…` — and can be revoked individually without touching other agents.
 
 Then copy the short rule in [docs/agent-instructions.md](docs/agent-instructions.md) into each target repo `AGENTS.md` / `CLAUDE.md` so the agent calls `publish_feature` **after shipped work is verified**. One feature keeps one key (`owner/repo:feature-slug`, slug is the branch name after the last slash, lowercased): the agent checks `list_feature_updates` first and reuses the key when the same branch, PR, or overlapping files are already shipped; re-publishing merges the new commit under that entry instead of duplicating it.
 
@@ -205,6 +205,7 @@ curl -f https://updaterapi.blitzgo.io/api/health
 | POST | `/api/auth/login` | Sign in (login session returned) |
 | POST | `/api/auth/logout` | Revoke the current login session |
 | GET | `/api/auth/me` | Who the current credential belongs to |
+| PATCH | `/api/auth/account` | Update the signed-in account: email and/or password (other sessions are revoked) |
 | GET/POST | `/api/auth/keys` | List / issue API keys (shown once at creation) |
 | DELETE | `/api/auth/keys/{id}` | Revoke an API key |
 

@@ -260,6 +260,12 @@ class AuthResponse(BaseModel):
     expires_at: datetime
 
 
+class AccountUpdate(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    email: str | None = Field(default=None, min_length=3, max_length=320)
+    new_password: str | None = Field(default=None, min_length=8, max_length=200)
+
+
 class ApiKeyCreate(BaseModel):
     name: str = Field(default="agent key", min_length=1, max_length=80)
 

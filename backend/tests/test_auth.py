@@ -88,6 +88,85 @@ def test_register_login_keys_flow(tmp_path, monkeypatch) -> None:
         engine.dispose()
 
 
+def test_change_password_and_email(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main.settings, "updater_token", "")
+    monkeypatch.setattr(main.settings, "mcp_allowed_hosts", "auth.example.test")
+    engine = _client(tmp_path)
+    try:
+        with TestClient(main.app, base_url="https://auth.example.test") as client:
+            reg = client.post("/api/auth/register", json={"email": "ada@example.com", "password": "correct-horse-42"})
+            assert reg.status_code == 201, reg.text
+            headers = {"Authorization": "Bearer " + reg.json()["session_token"]}
+
+            wrong = client.patch(
+                "/api/auth/account",
+                json={"current_password": "nope-nope-nope", "new_password": "another-horse-43"},
+                headers=headers,
+            )
+            assert wrong.status_code == 401
+
+            short = client.patch(
+                "/api/auth/account",
+                json={"current_password": "correct-horse-42", "new_password": "short"},
+                headers=headers,
+            )
+            assert short.status_code == 422
+
+            same = client.patch(
+                "/api/auth/account",
+                json={"current_password": "correct-horse-42", "new_password": "correct-horse-42"},
+                headers=headers,
+            )
+            assert same.status_code == 422
+
+            nothing = client.patch("/api/auth/account", json={"current_password": "correct-horse-42"}, headers=headers)
+            assert nothing.status_code == 422
+
+            # a second device session must be revoked by the password change
+            second = client.post("/api/auth/login", json={"email": "ada@example.com", "password": "correct-horse-42"})
+            second_headers = {"Authorization": "Bearer " + second.json()["session_token"]}
+
+            changed = client.patch(
+                "/api/auth/account",
+                json={
+                    "email": "Grace@Example.com",
+                    "current_password": "correct-horse-42",
+                    "new_password": "new-horse-43",
+                },
+                headers=headers,
+            )
+            assert changed.status_code == 200, changed.text
+            assert changed.json()["email"] == "grace@example.com"
+            assert changed.json()["email_changed"] is True
+            assert changed.json()["password_changed"] is True
+            assert changed.json()["sessions_revoked"] == 1
+
+            # current session stays signed in; the other device is signed out
+            assert client.get("/api/auth/me", headers=headers).json()["email"] == "grace@example.com"
+            assert client.get("/api/updates", headers=second_headers).status_code == 401
+
+            # old password stops working, new one works
+            assert client.post("/api/auth/login", json={"email": "grace@example.com", "password": "correct-horse-42"}).status_code == 401
+            relogin = client.post("/api/auth/login", json={"email": "grace@example.com", "password": "new-horse-43"})
+            assert relogin.status_code == 200
+
+            # API keys can update the account too; all login sessions are revoked
+            key = client.post("/api/auth/keys", json={"name": "agent"}, headers=headers)
+            key_headers = {"Authorization": "Bearer " + key.json()["key"]}
+            by_key = client.patch(
+                "/api/auth/account",
+                json={"current_password": "new-horse-43", "new_password": "key-horse-44"},
+                headers=key_headers,
+            )
+            assert by_key.status_code == 200, by_key.text
+            assert by_key.json()["password_changed"] is True
+            assert client.get("/api/auth/me", headers=headers).status_code == 401
+            assert client.post("/api/auth/login", json={"email": "grace@example.com", "password": "key-horse-44"}).status_code == 200
+    finally:
+        main.app.dependency_overrides.clear()
+        engine.dispose()
+
+
 def test_legacy_env_token_still_works(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(main.settings, "updater_token", "legacy-secret")
     engine = _client(tmp_path)
