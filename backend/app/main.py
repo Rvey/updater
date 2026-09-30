@@ -7,7 +7,7 @@ from pathlib import Path
 
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -101,17 +101,27 @@ def _ensure_code_context_columns() -> None:
 
 def _ensure_ownership_columns() -> None:
     from sqlalchemy import inspect, text
-    try:
-        update_cols = {column["name"] for column in inspect(engine).get_columns("updates")}
-    except Exception:
-        update_cols = set()
-    try:
-        ctx_cols = {column["name"] for column in inspect(engine).get_columns("context_requests")}
-    except Exception:
-        ctx_cols = set()
+
+    def columns(table: str) -> set[str]:
+        try:
+            return {column["name"] for column in inspect(engine).get_columns(table)}
+        except Exception:
+            return set()
+
+    update_cols = columns("updates")
+    ctx_cols = columns("context_requests")
+    note_cols = columns("notes")
+    task_cols = columns("tasks")
+    debt_cols = columns("tech_debt")
     with engine.begin() as connection:
         if "user_id" not in update_cols:
             connection.execute(text("ALTER TABLE updates ADD COLUMN user_id VARCHAR(36)"))
+        if "user_id" not in note_cols:
+            connection.execute(text("ALTER TABLE notes ADD COLUMN user_id VARCHAR(36)"))
+        if "user_id" not in task_cols:
+            connection.execute(text("ALTER TABLE tasks ADD COLUMN user_id VARCHAR(36)"))
+        if "user_id" not in debt_cols:
+            connection.execute(text("ALTER TABLE tech_debt ADD COLUMN user_id VARCHAR(36)"))
         if "source_repo_url" not in ctx_cols:
             connection.execute(text("ALTER TABLE context_requests ADD COLUMN source_repo_url VARCHAR(600)"))
         if "source_branch" not in ctx_cols:
@@ -129,6 +139,28 @@ def _optional_user(db, authorization):
         return _user_for_bearer(db, authorization)
     except Exception:
         return None
+
+
+def _owner_id(db: Session, authorization: str | None) -> str | None:
+    """Id of the signed-in account, or None for the shared env token / open preview."""
+    owner = _optional_user(db, authorization)
+    return owner.id if owner is not None else None
+
+
+def _ownership_clause(model, owner_id: str | None):
+    """SQL filter that keeps a signed-in account's rows plus legacy unowned rows.
+
+    Returns a true condition for the shared env token / open preview so callers can
+    always AND it into a query without branching.
+    """
+    if owner_id is None:
+        return true()
+    return or_(model.user_id.is_(None), model.user_id == owner_id)
+
+
+def _visible_to(item, owner_id: str | None, attribute: str = "user_id") -> bool:
+    """True when one row is visible to the account (own row, legacy row, or unrestricted)."""
+    return owner_id is None or getattr(item, attribute, None) in (None, owner_id)
 
 
 def require_token(
@@ -235,10 +267,9 @@ def list_updates(
     if q.strip():
         term = f"%{q.strip()}%"
         query = query.where(or_(Update.title.ilike(term), Update.summary.ilike(term), Update.why.ilike(term), Update.how_it_works.ilike(term)))
+    owner_id = _owner_id(db, authorization)
+    query = query.where(_ownership_clause(Update, owner_id))
     items = list(db.scalars(query).all())
-    owner = _optional_user(db, authorization)
-    if owner is not None:
-        items = [u for u in items if getattr(u, "user_id", None) in (None, owner.id)]
     if repo.strip():
         wanted = _normalize_repo_url(repo)
         items = [u for u in items if _normalize_repo_url(u.repo_url) == wanted]
@@ -286,19 +317,29 @@ def _merge_republish(existing: Update, payload: UpdateCreate, db: Session) -> Up
     return existing
 
 
+def _find_republish_target(db: Session, payload: UpdateCreate, owner_id: str | None) -> Update | None:
+    """Existing entry for this feature key, but only when the caller owns it (or it is unowned)."""
+    if not payload.external_id:
+        return None
+    return db.scalar(
+        select(Update)
+        .options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests))
+        .where(Update.external_id == payload.external_id, _ownership_clause(Update, owner_id))
+    )
+
+
 @app.post("/api/updates", response_model=UpdateRead, status_code=201, dependencies=[Depends(require_token)])
 def create_update(payload: UpdateCreate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> Update:
     _ensure_ownership_columns()
-    if payload.external_id:
-        existing = db.scalar(select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests)).where(Update.external_id == payload.external_id))
-        if existing:
-            return _merge_republish(existing, payload, db)
+    owner_id = _owner_id(db, authorization)
+    existing = _find_republish_target(db, payload, owner_id)
+    if existing is not None:
+        return _merge_republish(existing, payload, db)
     data = payload.model_dump(mode="json", exclude_none=True)
     data["repo_url"] = str(payload.repo_url)
     data["pr_url"] = str(payload.pr_url) if payload.pr_url else None
-    owner = _optional_user(db, authorization)
-    if owner is not None:
-        data["user_id"] = owner.id
+    if owner_id is not None:
+        data["user_id"] = owner_id
     if payload.shipped_at:
         data["shipped_at"] = payload.shipped_at
     update = Update(**data)
@@ -307,28 +348,31 @@ def create_update(payload: UpdateCreate, db: Session = Depends(get_db), authoriz
         db.commit()
     except IntegrityError as err:
         db.rollback()
-        if payload.external_id:
-            existing = db.scalar(select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests)).where(Update.external_id == payload.external_id))
-            if existing:
-                return _merge_republish(existing, payload, db)
+        existing = _find_republish_target(db, payload, owner_id)
+        if existing is not None:
+            return _merge_republish(existing, payload, db)
         raise HTTPException(status_code=409, detail="Update already exists") from err
     db.refresh(update)
     return update
 
 
-@app.get("/api/updates/{update_id}", response_model=UpdateRead, dependencies=[Depends(require_token)])
-def get_update(update_id: str, db: Session = Depends(get_db)) -> Update:
-    update = db.scalar(select(Update).options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests)).where(Update.id == update_id))
-    if not update:
+def _owned_update(db: Session, update_id: str, owner_id: str | None) -> Update:
+    """Fetch an update and reject access when it belongs to a different account."""
+    update = db.get(Update, update_id)
+    # 404 (not 403) for other accounts so ids cannot be probed.
+    if update is None or not _visible_to(update, owner_id):
         raise HTTPException(status_code=404, detail="Update not found")
     return update
 
 
+@app.get("/api/updates/{update_id}", response_model=UpdateRead, dependencies=[Depends(require_token)])
+def get_update(update_id: str, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> Update:
+    return _owned_update(db, update_id, _owner_id(db, authorization))
+
+
 @app.post("/api/updates/{update_id}/questions", response_model=QuestionRead, status_code=201, dependencies=[Depends(require_token)])
-async def ask_update(update_id: str, payload: QuestionCreate, db: Session = Depends(get_db)) -> Question:
-    update = db.get(Update, update_id)
-    if not update:
-        raise HTTPException(status_code=404, detail="Update not found")
+async def ask_update(update_id: str, payload: QuestionCreate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> Question:
+    update = _owned_update(db, update_id, _owner_id(db, authorization))
     answer, source = await explain_question(update, payload.question)
     entry = Question(update_id=update_id, question=payload.question, answer=answer, source=source)
     db.add(entry)
@@ -338,9 +382,8 @@ async def ask_update(update_id: str, payload: QuestionCreate, db: Session = Depe
 
 
 @app.post("/api/updates/{update_id}/impact-notes", response_model=ImpactNoteRead, status_code=201, dependencies=[Depends(require_token)])
-def add_impact_note(update_id: str, payload: ImpactNoteCreate, db: Session = Depends(get_db)) -> ImpactNote:
-    if not db.get(Update, update_id):
-        raise HTTPException(status_code=404, detail="Update not found")
+def add_impact_note(update_id: str, payload: ImpactNoteCreate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> ImpactNote:
+    _owned_update(db, update_id, _owner_id(db, authorization))
     entry = ImpactNote(update_id=update_id, note=payload.note.strip())
     db.add(entry)
     db.commit()
@@ -454,19 +497,18 @@ def _ensure_note_columns() -> None:
 
 
 @app.get("/api/notes", response_model=list[NoteRead], dependencies=[Depends(require_token)])
-def list_notes(db: Session = Depends(get_db)) -> list[Note]:
+def list_notes(db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> list[Note]:
     _ensure_note_columns()
-    return list(
-        db.scalars(
-            select(Note).order_by(Note.pinned.desc(), Note.updated_at.desc(), Note.created_at.desc())
-        ).all()
-    )
+    query = select(Note).order_by(Note.pinned.desc(), Note.updated_at.desc(), Note.created_at.desc())
+    query = query.where(_ownership_clause(Note, _owner_id(db, authorization)))
+    return list(db.scalars(query).all())
 
 
 @app.post("/api/notes", response_model=NoteRead, status_code=201, dependencies=[Depends(require_token)])
-def create_note(payload: NoteCreate, db: Session = Depends(get_db)) -> Note:
+def create_note(payload: NoteCreate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> Note:
     _ensure_note_columns()
     entry = Note(
+        user_id=_owner_id(db, authorization),
         title=payload.title.strip(),
         content=(payload.content or "").strip(),
         color=_normalize_note_color(payload.color),
@@ -490,10 +532,10 @@ def create_note(payload: NoteCreate, db: Session = Depends(get_db)) -> Note:
 
 
 @app.patch("/api/notes/{note_id}", response_model=NoteRead, dependencies=[Depends(require_token)])
-def update_note(note_id: str, payload: NoteUpdate, db: Session = Depends(get_db)) -> Note:
+def update_note(note_id: str, payload: NoteUpdate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> Note:
     _ensure_note_columns()
     entry = db.get(Note, note_id)
-    if not entry:
+    if not entry or not _visible_to(entry, _owner_id(db, authorization)):
         raise HTTPException(status_code=404, detail="Note not found")
     if payload.title is not None:
         entry.title = payload.title.strip()
@@ -541,9 +583,9 @@ def update_note(note_id: str, payload: NoteUpdate, db: Session = Depends(get_db)
 
 
 @app.delete("/api/notes/{note_id}", dependencies=[Depends(require_token)])
-def delete_note(note_id: str, db: Session = Depends(get_db)):
+def delete_note(note_id: str, db: Session = Depends(get_db), authorization: str | None = Header(default=None)):
     entry = db.get(Note, note_id)
-    if not entry:
+    if not entry or not _visible_to(entry, _owner_id(db, authorization)):
         raise HTTPException(status_code=404, detail="Note not found")
     db.delete(entry)
     db.commit()
@@ -587,13 +629,14 @@ def _task_ordering():
     return (Task.status.asc(), Task.position.asc(), Task.created_at.asc(), Task.id.asc())
 
 
-def _reindex_task_column(db: Session, status_value: str) -> None:
+def _reindex_task_column(db: Session, status_value: str, owner_id: str | None = None) -> None:
     """Compact positions inside one board column after a move or delete."""
+    query = select(Task).where(Task.status == status_value)
+    if owner_id is not None:
+        query = query.where(_ownership_clause(Task, owner_id))
     items = list(
         db.scalars(
-            select(Task)
-            .where(Task.status == status_value)
-            .order_by(Task.position.asc(), Task.created_at.asc(), Task.id.asc())
+            query.order_by(Task.position.asc(), Task.created_at.asc(), Task.id.asc())
         ).all()
     )
     for index, item in enumerate(items):
@@ -607,8 +650,10 @@ def list_tasks(
     status: str = Query(default="", max_length=20),
     priority: str = Query(default="", max_length=20),
     db: Session = Depends(get_db),
+    authorization: str | None = Header(default=None),
 ) -> list[Task]:
     query = select(Task).order_by(*_task_ordering())
+    query = query.where(_ownership_clause(Task, _owner_id(db, authorization)))
     if status.strip():
         query = query.where(Task.status == _normalize_task_status(status))
     if priority.strip():
@@ -637,10 +682,16 @@ def list_tasks(
 
 
 @app.post("/api/tasks", response_model=TaskRead, status_code=201, dependencies=[Depends(require_token)])
-def create_task(payload: TaskCreate, db: Session = Depends(get_db)) -> Task:
+def create_task(payload: TaskCreate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> Task:
     status_value = _normalize_task_status(payload.status)
-    next_position = db.scalar(select(func.count()).select_from(Task).where(Task.status == status_value)) or 0
+    owner_id = _owner_id(db, authorization)
+    next_position = db.scalar(
+        select(func.count())
+        .select_from(Task)
+        .where(Task.status == status_value, _ownership_clause(Task, owner_id))
+    ) or 0
     entry = Task(
+        user_id=owner_id,
         title=payload.title.strip(),
         description=(payload.description or "").strip(),
         status=status_value,
@@ -662,17 +713,18 @@ def create_task(payload: TaskCreate, db: Session = Depends(get_db)) -> Task:
 
 
 @app.get("/api/tasks/{task_id}", response_model=TaskRead, dependencies=[Depends(require_token)])
-def get_task(task_id: str, db: Session = Depends(get_db)) -> Task:
+def get_task(task_id: str, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> Task:
     entry = db.get(Task, task_id)
-    if not entry:
+    if not entry or not _visible_to(entry, _owner_id(db, authorization)):
         raise HTTPException(status_code=404, detail="Task not found")
     return entry
 
 
 @app.patch("/api/tasks/{task_id}", response_model=TaskRead, dependencies=[Depends(require_token)])
-def update_task(task_id: str, payload: TaskUpdate, db: Session = Depends(get_db)) -> Task:
+def update_task(task_id: str, payload: TaskUpdate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> Task:
+    owner_id = _owner_id(db, authorization)
     entry = db.get(Task, task_id)
-    if not entry:
+    if not entry or not _visible_to(entry, owner_id):
         raise HTTPException(status_code=404, detail="Task not found")
     if payload.title is not None:
         entry.title = payload.title.strip()
@@ -697,10 +749,14 @@ def update_task(task_id: str, payload: TaskUpdate, db: Session = Depends(get_db)
         status_value = _normalize_task_status(payload.status)
         if status_value != entry.status:
             old_status = entry.status
-            next_position = db.scalar(select(func.count()).select_from(Task).where(Task.status == status_value)) or 0
+            next_position = db.scalar(
+                select(func.count())
+                .select_from(Task)
+                .where(Task.status == status_value, _ownership_clause(Task, owner_id))
+            ) or 0
             entry.status = status_value
             entry.position = int(next_position)
-            _reindex_task_column(db, old_status)
+            _reindex_task_column(db, old_status, owner_id)
         if status_value == "done":
             entry.completed_at = entry.completed_at or now_utc()
         else:
@@ -712,11 +768,12 @@ def update_task(task_id: str, payload: TaskUpdate, db: Session = Depends(get_db)
 
 
 @app.post("/api/tasks/reorder", response_model=list[TaskRead], dependencies=[Depends(require_token)])
-def reorder_tasks(payload: TaskReorder, db: Session = Depends(get_db)) -> list[Task]:
+def reorder_tasks(payload: TaskReorder, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> list[Task]:
     """Persist a drag-and-drop board state: ordered task ids per column."""
     if not payload.columns:
         raise HTTPException(status_code=422, detail="Provide at least one column")
-    tasks = {task.id: task for task in db.scalars(select(Task)).all()}
+    owner_id = _owner_id(db, authorization)
+    tasks = {task.id: task for task in db.scalars(select(Task).where(_ownership_clause(Task, owner_id))).all()}
     seen: set[str] = set()
     normalized: list[tuple[str, list[str]]] = []
     for raw_status, ids in payload.columns.items():
@@ -742,20 +799,21 @@ def reorder_tasks(payload: TaskReorder, db: Session = Depends(get_db)) -> list[T
             else:
                 task.completed_at = None
     for status_value in TASK_STATUSES:
-        _reindex_task_column(db, status_value)
+        _reindex_task_column(db, status_value, owner_id)
     db.commit()
-    return list(db.scalars(select(Task).order_by(*_task_ordering())).all())
+    return list(db.scalars(select(Task).where(_ownership_clause(Task, owner_id)).order_by(*_task_ordering())).all())
 
 
 @app.delete("/api/tasks/{task_id}", dependencies=[Depends(require_token)])
-def delete_task(task_id: str, db: Session = Depends(get_db)):
+def delete_task(task_id: str, db: Session = Depends(get_db), authorization: str | None = Header(default=None)):
+    owner_id = _owner_id(db, authorization)
     entry = db.get(Task, task_id)
-    if not entry:
+    if not entry or not _visible_to(entry, owner_id):
         raise HTTPException(status_code=404, detail="Task not found")
     status_value = entry.status
     db.delete(entry)
     db.flush()
-    _reindex_task_column(db, status_value)
+    _reindex_task_column(db, status_value, owner_id)
     db.commit()
     return {"ok": True}
 
@@ -787,8 +845,10 @@ def list_tech_debt(
     urgency: str = Query(default="", max_length=20),
     status: str = Query(default="", max_length=20),
     db: Session = Depends(get_db),
+    authorization: str | None = Header(default=None),
 ) -> list[TechDebt]:
     query = select(TechDebt).order_by(TechDebt.created_at.desc())
+    query = query.where(_ownership_clause(TechDebt, _owner_id(db, authorization)))
     if q.strip():
         term = f"%{q.strip()}%"
         query = query.where(
@@ -811,10 +871,11 @@ def list_tech_debt(
 
 
 @app.post("/api/tech-debt", response_model=TechDebtRead, status_code=201, dependencies=[Depends(require_token)])
-def create_tech_debt(payload: TechDebtCreate, db: Session = Depends(get_db)) -> TechDebt:
+def create_tech_debt(payload: TechDebtCreate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> TechDebt:
     urgency = _normalize_tech_debt_urgency(payload.urgency)
     status_value = _normalize_tech_debt_status(payload.status)
     entry = TechDebt(
+        user_id=_owner_id(db, authorization),
         title=payload.title.strip(),
         scope=payload.scope.strip(),
         description=payload.description.strip(),
@@ -840,17 +901,17 @@ def create_tech_debt(payload: TechDebtCreate, db: Session = Depends(get_db)) -> 
 
 
 @app.get("/api/tech-debt/{debt_id}", response_model=TechDebtRead, dependencies=[Depends(require_token)])
-def get_tech_debt(debt_id: str, db: Session = Depends(get_db)) -> TechDebt:
+def get_tech_debt(debt_id: str, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> TechDebt:
     entry = db.get(TechDebt, debt_id)
-    if not entry:
+    if not entry or not _visible_to(entry, _owner_id(db, authorization)):
         raise HTTPException(status_code=404, detail="Tech debt item not found")
     return entry
 
 
 @app.patch("/api/tech-debt/{debt_id}", response_model=TechDebtRead, dependencies=[Depends(require_token)])
-def update_tech_debt(debt_id: str, payload: TechDebtUpdate, db: Session = Depends(get_db)) -> TechDebt:
+def update_tech_debt(debt_id: str, payload: TechDebtUpdate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> TechDebt:
     entry = db.get(TechDebt, debt_id)
-    if not entry:
+    if not entry or not _visible_to(entry, _owner_id(db, authorization)):
         raise HTTPException(status_code=404, detail="Tech debt item not found")
     if payload.title is not None:
         entry.title = payload.title.strip()
@@ -892,9 +953,9 @@ def update_tech_debt(debt_id: str, payload: TechDebtUpdate, db: Session = Depend
 
 
 @app.delete("/api/tech-debt/{debt_id}", dependencies=[Depends(require_token)])
-def delete_tech_debt(debt_id: str, db: Session = Depends(get_db)):
+def delete_tech_debt(debt_id: str, db: Session = Depends(get_db), authorization: str | None = Header(default=None)):
     entry = db.get(TechDebt, debt_id)
-    if not entry:
+    if not entry or not _visible_to(entry, _owner_id(db, authorization)):
         raise HTTPException(status_code=404, detail="Tech debt item not found")
     db.delete(entry)
     db.commit()
@@ -902,10 +963,9 @@ def delete_tech_debt(debt_id: str, db: Session = Depends(get_db)):
 
 
 @app.post("/api/updates/{update_id}/context-requests", response_model=ContextRequestRead, status_code=201, dependencies=[Depends(require_token)])
-def request_code_context(update_id: str, payload: ContextRequestCreate, db: Session = Depends(get_db)) -> ContextRequest:
-    update = db.scalar(select(Update).options(selectinload(Update.context_requests)).where(Update.id == update_id))
-    if not update:
-        raise HTTPException(status_code=404, detail="Update not found")
+def request_code_context(update_id: str, payload: ContextRequestCreate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> ContextRequest:
+    update = _owned_update(db, update_id, _owner_id(db, authorization))
+    update = db.scalar(select(Update).options(selectinload(Update.context_requests)).where(Update.id == update.id))
     pending = [req for req in update.context_requests if req.status == "pending" and req.question.strip() == payload.question.strip()]
     if pending:
         return pending[0]
@@ -929,7 +989,7 @@ def list_context_requests(status: str = Query(default="pending", max_length=20),
     items = list(db.scalars(query).all())
     owner = _optional_user(db, authorization)
     if owner is not None:
-        items = [it for it in items if it.update is None or getattr(it.update, "user_id", None) in (None, owner.id)]
+        items = [it for it in items if it.update is None or _visible_to(it.update, owner.id)]
     if repo.strip():
         wanted = _normalize_repo_url(repo)
         items = [it for it in items if it.update is not None and _normalize_repo_url(it.update.repo_url) == wanted]
@@ -948,7 +1008,7 @@ def fulfill_context_request(request_id: str, payload: ContextRequestFulfill, db:
     if update is None:
         raise HTTPException(status_code=404, detail="Update not found")
     owner = _optional_user(db, authorization)
-    if owner is not None and getattr(update, "user_id", None) not in (None, owner.id):
+    if owner is not None and not _visible_to(update, owner.id):
         raise HTTPException(status_code=403, detail="This request belongs to another account")
     claimed_repo = (payload.repo_url or "").strip()
     if claimed_repo:
@@ -982,7 +1042,7 @@ def claim_context_request(request_id: str, payload: ContextRequestClaim, db: Ses
         return entry
     update = db.get(Update, entry.update_id)
     owner = _optional_user(db, authorization)
-    if owner is not None and update is not None and getattr(update, "user_id", None) not in (None, owner.id):
+    if owner is not None and update is not None and not _visible_to(update, owner.id):
         raise HTTPException(status_code=403, detail="This request belongs to another account")
     agent = (payload.agent or "").strip()[:100] or None
     now = now_utc()

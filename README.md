@@ -142,6 +142,23 @@ export UPDATER_TOKEN='your-long-random-secret'
 
 Prefer per-agent credentials: sign in to the web UI, open **Settings → API keys**, and create a key per agent. A key (`upk_…`) works anywhere the token does — `Authorization: Bearer upk_…` — and can be revoked individually without touching other agents.
 
+Each key scopes the workspace to its account: updates, notes, tasks, and tech debt are only listed and edited for the account that owns them, whether you call the REST API or an MCP tool. The agent's own key travels with every MCP call, so a publish is attributed to the right account instead of the server's shared token. The legacy `UPDATER_TOKEN` (and a fresh server with no accounts) keeps the unrestricted view on purpose.
+
+### Upgrading a server that already has rows
+
+Entries created before per-account scoping have no owner (`user_id IS NULL`) and stay visible to **every** signed-in account. Deploying the fix therefore changes nobody's view: each account keeps seeing exactly what it saw before, and only *new* publishes are scoped to the agent that sent them. Adopt the old rows when you are ready, not as part of the deploy.
+
+```bash
+cd backend
+uv run python -m app.backfill_ownership                              # inventory only; never writes
+uv run python -m app.backfill_ownership --list --table updates       # inspect the rows
+uv run python -m app.backfill_ownership --email you@example.com --repo github.com/you
+```
+
+Adopt one table or one repo at a time (use `--table` / `--repo`); assigned rows never leave their owner's view, so each step is safe to check before the next. Every write is recorded, and `--undo --run-id <id>` returns exactly the rows that run adopted — leaving anything the account already owned untouched.
+
+If several people share the server and their rows are mixed together, ownership cannot be recovered from data alone (the bug recorded no owner). Give each person their own account, deploy the fix, and let new publishes self-attribute; then leave the ambiguous backfill history unowned so everyone still sees it, or `--repo`-filter the rows you can attribute with confidence.
+
 Then copy the short rule in [docs/agent-instructions.md](docs/agent-instructions.md) into each target repo `AGENTS.md` / `CLAUDE.md` so the agent calls `publish_feature` **after shipped work is verified**. One feature keeps one key (`owner/repo:feature-slug`, slug is the branch name after the last slash, lowercased): the agent checks `list_feature_updates` first and reuses the key when the same branch, PR, or overlapping files are already shipped; re-publishing merges the new commit under that entry instead of duplicating it.
 
 Stdio fallback (local subprocess transport): `cd backend && uv run python -m app.mcp_server` with `UPDATER_API_URL` + `UPDATER_TOKEN` set.

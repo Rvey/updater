@@ -1,0 +1,393 @@
+Build a polished, fun, production-ready marketing homepage for “Updater”, an open-source shipping memory for work completed with coding agents.
+
+PROJECT CONTEXT
+
+Updater helps developers preserve the story behind shipped code. After a coding agent finishes and verifies a feature, it publishes a structured update over MCP containing what changed, why it was needed, how it works, expected impact, tradeoffs, relevant files, branch, commit, pull request, tags, and learning notes. The developer gets a searchable record of shipped work instead of losing important context across agent chats, commits, and pull requests.
+
+The homepage should make this idea understandable in under ten seconds:
+
+“Your coding agent writes the code. Updater remembers why it shipped.”
+
+Primary audience: developers and small engineering teams using Codex, Claude Code, Cursor, or OpenCode.
+
+Primary action: connect an agent with the one-line CLI command.
+Secondary action: view the project on GitHub.
+
+Real project links and assets:
+- GitHub: https://github.com/Rvey/updater
+- MIT license: https://github.com/Rvey/updater/blob/main/LICENSE
+- API: https://updaterapi.blitzgo.io
+- API documentation: https://updaterapi.blitzgo.io/docs
+- MCP endpoint: https://updaterapi.blitzgo.io/mcp
+- Logo asset: frontend/public/icon.svg
+- Main product screenshot: docs/screenshots/app-overview.png
+- Detail screenshot: docs/screenshots/update-detail.png
+- Search screenshot: docs/screenshots/search-in-action.png
+- Agent connection screenshot: docs/screenshots/connect-agent.png
+- Code context screenshot: docs/screenshots/code-context.png
+
+VISUAL THESIS
+
+Create an editorial developer-tool homepage that feels like a playful shipping log crossed with a clean terminal. Use a warm off-white canvas, near-black ink, and electric lime as the single accent color. The visual language should feel fast, clever, trustworthy, and slightly mischievous—not corporate, cyberpunk, or like a generic SaaS template.
+
+Treat the first viewport like a poster. Make “Updater.” the loudest brand element. Use oversized type, confident spacing, subtle grid lines, terminal details, and the real product screenshot as the dominant visual. Keep the page mostly cardless. Use full-width sections, dividers, columns, sticky storytelling, and large media instead of a grid of floating rounded cards.
+
+Suggested palette:
+- Canvas: #F7F7F2
+- Ink: #22241F
+- Muted ink: #666A61
+- Hairline: #DFE1D8
+- Lime accent: #B8F34A or a similarly vivid accessible lime
+- Dark section: #20231E
+- White: #FFFFFF
+
+Typography:
+- Use Geist or a similarly crisp grotesk for headings and brand.
+- Use Inter for body copy.
+- Use a readable monospace face for commands, labels, file paths, and metadata.
+- Maximum two primary font families plus monospace.
+
+Add a very subtle paper/noise texture and faint repository-grid lines, but preserve excellent contrast. Avoid glossy 3D blobs, purple gradients, excessive shadows, glassmorphism, stock photography, fake testimonials, fake customer logos, and invented usage statistics.
+
+INTERACTION THESIS
+
+Use restrained motion with three memorable moments:
+1. On load, reveal the brand, headline, command line, and screenshot in a quick stagger. A small lime “shipped” status dot can blink once, then remain steady.
+2. In the “How it works” section, use a sticky vertical story. As the user scrolls through the four steps, animate a line traveling from agent → MCP → ship log → future context.
+3. Make every CLI command block genuinely copyable. On click, change “Copy” to “Copied ✓” briefly. Give screenshot frames a subtle 1–2 degree tilt or depth shift on scroll, but keep text and controls still and readable.
+
+Respect prefers-reduced-motion. Make all interactions keyboard accessible. Do not animate continuously except for an optional very subtle terminal cursor.
+
+PAGE STRUCTURE AND FINAL COPY
+
+1. NAVIGATION
+
+Use a slim, calm navigation bar over the hero, transparent at the top and warm off-white with a hairline divider after scrolling.
+
+Left:
+- Updater logo from frontend/public/icon.svg
+- Wordmark: “Updater.” with the period in lime
+
+Center or right navigation links:
+- Why Updater
+- How it works
+- Features
+- Open source
+
+Right actions:
+- Text link with GitHub icon: “GitHub”
+- Compact primary button: “Connect an agent”
+
+On mobile, use a simple accessible menu. Keep the main CTA visible.
+
+2. HERO — ONE COMMAND, ONE BIG IDEA
+
+Full-bleed hero with a minimum height of the first viewport minus the navigation. Do not put the hero inside a rounded container. Use one dominant composition: large copy on the left or upper-left, then a wide real screenshot entering from the lower-right/lower half.
+
+Eyebrow:
+OPEN-SOURCE SHIPPING MEMORY FOR CODING AGENTS
+
+Brand display:
+Updater.
+
+Headline:
+Your agent ships the code.
+Updater remembers why.
+
+Body copy:
+Keep a searchable record of every verified feature—what changed, why it mattered, how it works, and what happened next.
+
+Primary command block:
+curl -fsSL https://updaterapi.blitzgo.io/connect.sh | bash
+
+The command block must include a copy button and a small caption:
+One command connects Codex, Claude Code, Cursor, or OpenCode.
+
+Secondary actions:
+- “Explore on GitHub” → https://github.com/Rvey/updater
+- “See how it works” → scroll to the workflow section
+
+Tiny trust line beneath the actions:
+MIT licensed · Self-hostable · MCP-native · Your code stays in your repo
+
+Hero visual:
+Use docs/screenshots/app-overview.png as the primary product screenshot. Present it large enough to read, with a restrained browser/app frame. Let it overlap the fold slightly. Add only a few tiny metadata annotations around it, such as “verified”, “impact recorded”, and “context attached”. Do not surround it with floating feature cards.
+
+3. THE PROBLEM — “THE CODE SHIPPED. THE CONTEXT DISAPPEARED.”
+
+Use a stark editorial section with a huge headline and two-column copy. A faint stream of fading agent-chat lines can disappear behind the heading while one lime update record remains fixed.
+
+Headline:
+The code shipped.
+The context disappeared.
+
+Body:
+Agent chats are temporary. Commit messages are compressed. Pull requests explain a moment, then drift out of view. Weeks later, the code is still there—but the reasoning, tradeoffs, and expected impact are scattered across tools.
+
+Closing line in larger type:
+Updater turns finished agent work into durable project memory.
+
+Use three short contrast statements, separated by thin rules rather than cards:
+- Not another chat transcript. A structured record of shipped work.
+- Not a replacement for Git. The missing story around the commit.
+- Not full repository access. Only the context your agent chooses to send.
+
+4. PURPOSE AND ORIGIN — “BUILT BECAUSE SHIPPING WITH AGENTS MOVES FAST”
+
+This section explains why the project exists. Keep it candid and founder-like, not grandiose.
+
+Section label:
+WHY UPDATER EXISTS
+
+Headline:
+Built for the part after “done.”
+
+Copy:
+Coding agents make implementation fast, but speed creates a new problem: understanding what was shipped after the chat ends. Updater was created to preserve that missing layer of memory automatically—after work is verified, while the reasoning is still fresh.
+
+Supporting copy:
+It gives future-you and your team a clean answer to four questions: What changed? Why did we change it? How does it work? Did it have the impact we expected?
+
+Pull quote:
+“A changelog tells you what moved. Updater remembers the decision.”
+
+5. HOW IT WORKS — STICKY FOUR-STEP FLOW
+
+Section label:
+FROM VERIFIED CODE TO SHARED MEMORY
+
+Headline:
+Ship once. Understand it later.
+
+Build a sticky, scroll-driven workflow with four numbered steps on one side and a simple animated pipeline on the other. The pipeline should read: Coding agent → MCP → Updater → Future question.
+
+Step 01 — Finish and verify
+Your coding agent completes a feature, runs the relevant checks, and confirms the work is ready.
+
+Step 02 — Publish the story
+Before replying, the agent calls Updater over MCP and sends the what, why, how, impact, tradeoffs, files, branch, commit, and pull request.
+
+Step 03 — Search the ship log
+The update appears in a focused workspace where you can browse by repository, search instantly, add notes, and keep related questions attached.
+
+Step 04 — Learn over time
+Record observed impact, revisit decisions, or ask the connected agent for focused code context without giving the app full repository access.
+
+End the section with a small terminal event sequence:
+$ feature verified
+✓ publish_feature
+✓ update saved
+✓ context available later
+
+6. PRODUCT SCREENSHOT — THE SHIP LOG
+
+Use docs/screenshots/app-overview.png at near full width. This should be the largest product image on the page after the hero. Do not crop away the repository sidebar, update list, or detail pane.
+
+Section label:
+THE SHIP LOG
+
+Headline:
+Every shipped feature, with its reasoning intact.
+
+Body:
+Search across titles, summaries, repositories, tags, and file paths. Open an update to see why it was built, how it works, expected impact, tradeoffs, learning notes, files, branch, commit, and pull request—all in one place.
+
+Add three small callouts pointing to real areas of the screenshot:
+- Search across the full history
+- Keep implementation and intent together
+- Attach impact notes and follow-up questions
+
+7. FEATURES — USE AN EDITORIAL LIST, NOT A GENERIC CARD GRID
+
+Section label:
+MEMORY THAT KEEPS WORKING
+
+Headline:
+More useful than a changelog.
+
+Lay out six features as alternating full-width rows with a number, concise copy, and either a screenshot crop or a minimal line illustration. Avoid six identical cards.
+
+01 — Structured feature updates
+Capture the reason, implementation, expected impact, tradeoffs, learning notes, files, tags, branch, commit, pull request, and shipping date.
+
+02 — Instant search
+Find old decisions by title, summary, repository, tag, or code path as you type.
+Visual: docs/screenshots/search-in-action.png
+
+03 — Impact over time
+Add dated observations after release, so expected outcomes and real outcomes live together.
+
+04 — Questions that stay attached
+Ask questions inside an update. Answers remain connected to the feature instead of disappearing into another chat.
+Visual: docs/screenshots/update-detail.png
+
+05 — Tech-debt inbox
+Run /tech-depth from an agent checkout to capture rushed decisions with scope, urgency, impact, mitigation, and current coverage.
+
+06 — Quick notes
+Keep lightweight follow-ups, reminders, and ideas beside the shipping history without turning the workspace into a project-management suite.
+
+8. AGENT INTEGRATION — “MEET YOUR CODING CREW”
+
+Use a dark section with lime details. This should feel like a terminal coming alive, not a logo cloud.
+
+Section label:
+WORKS WHERE YOUR AGENT WORKS
+
+Headline:
+One command. Your whole coding crew.
+
+Body:
+The installer connects MCP and adds the Updater commands for Codex, Claude Code, Cursor, and OpenCode. Choose one agent or configure them all.
+
+Command:
+curl -fsSL https://updaterapi.blitzgo.io/connect.sh | bash
+
+Show the four supported agent names as a simple typographic rail:
+Codex / Claude Code / Cursor / OpenCode
+
+Use docs/screenshots/connect-agent.png as the supporting visual.
+
+Include the available command set as terminal rows:
+- /updater — route common shipping and context tasks
+- /updater-ship — publish a verified feature
+- /updater-check — fulfill pending code-context requests
+- /updater-impact — add a real-world impact observation
+- /tech-depth — scan for tech debt and rushed decisions
+
+Small technical line:
+MCP over Streamable HTTP, with a stdio fallback for local workflows.
+
+9. PRIVATE CODE CONTEXT — AGENT AS A CODEBASE PROXY
+
+Use docs/screenshots/code-context.png. Pair it with a simple security diagram showing that the repository remains on the developer’s machine.
+
+Section label:
+YOUR REPO STAYS YOURS
+
+Headline:
+Ask for code context without handing over the codebase.
+
+Body:
+Updater never clones your repository and never needs full file access. When a question requires code detail, your connected agent reads the local files and sends only a few focused excerpts back to the update.
+
+Three concise points:
+- Private repositories remain private.
+- The agent chooses the relevant snippets.
+- Context stays attached to the feature that requested it.
+
+Diagram labels:
+Your local repo → Your coding agent → Focused excerpts → Updater
+
+10. OPEN SOURCE — INVITE PEOPLE IN
+
+Give this section generous space and a visible GitHub link. Use the actual icon and a subtle view of repository files or a stylized open-source manifest—not fake metrics.
+
+Section label:
+OPEN BY DESIGN
+
+Headline:
+Fork it. Host it. Improve it.
+
+Body:
+Updater is MIT licensed and built in the open. Run it locally with SQLite, deploy it with PostgreSQL, connect your own agents, and shape the workflow around your team.
+
+Technical stack line:
+React 19 · TypeScript · Vite · FastAPI · SQLAlchemy · PostgreSQL / SQLite · MCP
+
+Actions:
+- “View the source” → https://github.com/Rvey/updater
+- “Read the API docs” → https://updaterapi.blitzgo.io/docs
+- “Read the MIT license” → https://github.com/Rvey/updater/blob/main/LICENSE
+
+Contribution copy:
+Issues and pull requests are welcome. For larger changes, open an issue first so the direction can be discussed together.
+
+11. FINAL CTA — RETURN TO THE ONE COMMAND
+
+Use a high-contrast lime or near-black full-width section. Keep it simple and decisive.
+
+Headline:
+Give your shipped code a memory.
+
+Body:
+Connect an agent, verify a feature, and let Updater keep the story.
+
+Command:
+curl -fsSL https://updaterapi.blitzgo.io/connect.sh | bash
+
+Actions:
+- Copy command
+- View on GitHub
+
+Trust line:
+Open source. MIT licensed. Self-hostable. Built for Codex, Claude Code, Cursor, and OpenCode.
+
+12. FOOTER
+
+Left:
+- Logo and “Updater.”
+- “Your open-source shipping memory.”
+
+Links:
+- GitHub
+- API docs
+- MCP endpoint
+- MIT license
+- How it works
+- Connect an agent
+
+Small print:
+Built for developers shipping with agents.
+
+Add a small live-looking but non-deceptive system label:
+MCP ENDPOINT · https://updaterapi.blitzgo.io/mcp
+
+RESPONSIVE BEHAVIOR
+
+- Desktop: wide editorial compositions, large screenshot surfaces, and sticky workflow storytelling.
+- Tablet: preserve the hierarchy while stacking text and media where necessary.
+- Mobile: keep the first screen focused on brand, headline, command, and primary CTA. Screenshots may scroll horizontally inside an accessible viewport if shrinking them would make the UI unreadable.
+- Use fluid typography with clamp().
+- Keep tap targets at least 44px.
+- Prevent horizontal page overflow.
+- Do not hide meaningful content or the CLI command on small screens.
+
+ACCESSIBILITY AND QUALITY
+
+- Use semantic HTML landmarks and a logical heading hierarchy.
+- Ensure WCAG AA color contrast, including lime treatments.
+- Add descriptive alt text for every screenshot.
+- Provide visible keyboard focus states.
+- Make copy buttons announce success to assistive technology.
+- Respect reduced-motion preferences.
+- Optimize real screenshots and lazy-load those below the fold.
+- Avoid layout shift and oversized client-side animation bundles.
+- Keep navigation, command copy actions, anchor links, and GitHub/API links functional.
+
+IMPLEMENTATION GUARDRAILS
+
+- Use the project’s existing React, TypeScript, Vite, Tailwind CSS, and shadcn/ui setup.
+- Reuse the existing logo and real screenshots. Do not fabricate a different application UI.
+- Preserve the established Geist/Inter typography and zinc/lime product identity.
+- Prefer clean layout primitives over excessive component abstractions.
+- Do not use a generic feature-card mosaic.
+- Do not invent testimonials, company logos, customer counts, GitHub stars, uptime claims, performance numbers, or pricing.
+- Do not add a pricing section; Updater is presented as open source and self-hostable.
+- Do not claim the service stores an entire codebase.
+- Keep copy concise and use the exact product facts provided here.
+- The finished page should feel fun because of typography, rhythm, terminal micro-interactions, and motion—not jokes, mascots, clutter, or novelty UI.
+
+FINAL ACCEPTANCE CHECK
+
+The finished homepage must answer, in order:
+1. What is Updater?
+2. Why was it created?
+3. How does it fit into agent-assisted coding?
+4. What exactly does it save and help users do?
+5. How does code-context access preserve privacy?
+6. Which agents does it support?
+7. How can someone connect it in one command?
+8. Is it open source, self-hostable, and easy to contribute to?
+
+The overall impression should be: “This is a sharp, useful developer tool I understand immediately—and I want to paste that command.”

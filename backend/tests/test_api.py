@@ -1,12 +1,20 @@
 from collections.abc import Generator
 from datetime import datetime, timezone
+import json
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app import main
+from app import mcp_server
+from app import backfill_ownership
 from app.db import Base
+from app.db import Note
+from app.db import Update
+from app.db import User
+from app import auth as auth_utils
 
 
 def test_republish_merges_and_questions_stay_with_feature(tmp_path) -> None:
@@ -461,3 +469,274 @@ def test_claim_and_wrong_project_rejected(tmp_path) -> None:
     finally:
         main.app.dependency_overrides.clear()
         test_engine.dispose()
+
+
+def _signed_in_client(test_engine, **client_kwargs) -> TestClient:
+    """TestClient whose API calls carry a per-account key instead of the shared token."""
+    session_factory = sessionmaker(bind=test_engine)
+
+    def test_db():
+        with session_factory() as session:
+            yield session
+
+    main.app.dependency_overrides[main.get_db] = test_db
+    return TestClient(main.app, **client_kwargs)
+
+
+def _register_account(client: TestClient, email: str) -> str:
+    """Register one account and return an `upk_` agent key that identifies it."""
+    registered = client.post("/api/auth/register", json={"email": email, "password": "correct horse battery"})
+    assert registered.status_code == 201, registered.text
+    session_token = registered.json()["session_token"]
+    created_key = client.post(
+        "/api/auth/keys",
+        json={"name": email.split("@")[0]},
+        headers={"Authorization": f"Bearer {session_token}"},
+    )
+    assert created_key.status_code == 201, created_key.text
+    return created_key.json()["key"]
+
+
+def test_accounts_only_see_their_own_updates(tmp_path) -> None:
+    """An agent key must scope updates to its account instead of exposing everyone's work."""
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'ownership.sqlite3'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(test_engine)
+    client = _signed_in_client(test_engine)
+    base = {
+        "summary": "A shipped change recorded for one account only.",
+        "repo_url": "https://github.com/example/repo",
+        "why": "Each account keeps its own update history.",
+        "how_it_works": "The API stores the owning account id on every update.",
+        "impact": "Agents stop seeing unrelated accounts' updates.",
+    }
+    try:
+        with client:
+            alpha = _register_account(client, "alpha@example.com")
+            beta = _register_account(client, "beta@example.com")
+            alpha_headers = {"Authorization": f"Bearer {alpha}"}
+            beta_headers = {"Authorization": f"Bearer {beta}"}
+
+            created = client.post("/api/updates", json={**base, "title": "Alpha only", "external_id": "example/repo:alpha"}, headers=alpha_headers)
+            assert created.status_code == 201, created.text
+            alpha_update_id = created.json()["id"]
+            assert created.json()["user_id"] is not None
+
+            # Beta sees an empty board and cannot read Alpha's entry by id.
+            assert client.get("/api/updates", headers=beta_headers).json() == []
+            assert client.get(f"/api/updates/{alpha_update_id}", headers=beta_headers).status_code == 404
+            assert client.post(f"/api/updates/{alpha_update_id}/impact-notes", json={"note": "nope"}, headers=beta_headers).status_code == 404
+            assert client.post(f"/api/updates/{alpha_update_id}/context-requests", json={"question": "Where?"}, headers=beta_headers).status_code == 404
+
+            # Alpha still sees its own update, plus anything an agent republishes.
+            listed = client.get("/api/updates", headers=alpha_headers).json()
+            assert [item["id"] for item in listed] == [alpha_update_id]
+            republished = client.post("/api/updates", json={**base, "title": "Alpha only", "external_id": "example/repo:alpha", "commit_sha": "abc"}, headers=alpha_headers)
+            assert republished.status_code == 201, republished.text
+            assert republished.json()["id"] == alpha_update_id
+
+            # A second account republishing the same feature key must not merge into Alpha's entry.
+            beta_created = client.post("/api/updates", json={**base, "title": "Beta only", "external_id": "example/repo:alpha"}, headers=beta_headers)
+            assert beta_created.status_code == 409, beta_created.text
+            assert client.get("/api/updates", headers=alpha_headers).json()[0]["commit_sha"] == "abc"
+
+            # The shared env token keeps the legacy unrestricted view.
+            main.settings.updater_token = "shared-secret"
+            try:
+                everything = client.get("/api/updates", headers={"Authorization": "Bearer shared-secret"})
+                assert [item["id"] for item in everything.json()] == [alpha_update_id]
+            finally:
+                main.settings.updater_token = ""
+    finally:
+        main.app.dependency_overrides.clear()
+        test_engine.dispose()
+
+
+def test_notes_tasks_and_tech_debt_are_scoped_per_account(tmp_path) -> None:
+    """Notes, tasks and tech debt must honour the same account scoping as updates."""
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'scoped.sqlite3'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(test_engine)
+    client = _signed_in_client(test_engine)
+    try:
+        with client:
+            alpha = _register_account(client, "alpha@example.com")
+            beta = _register_account(client, "beta@example.com")
+            alpha_headers = {"Authorization": f"Bearer {alpha}"}
+            beta_headers = {"Authorization": f"Bearer {beta}"}
+
+            note = client.post("/api/notes", json={"title": "Alpha note", "content": "private"}, headers=alpha_headers)
+            assert note.status_code == 201, note.text
+            assert client.get("/api/notes", headers=beta_headers).json() == []
+            assert client.patch(f"/api/notes/{note.json()['id']}", json={"title": "hijack"}, headers=beta_headers).status_code == 404
+            assert len(client.get("/api/notes", headers=alpha_headers).json()) == 1
+
+            task = client.post("/api/tasks", json={"title": "Alpha task", "status": "backlog"}, headers=alpha_headers)
+            assert task.status_code == 201, task.text
+            assert client.get("/api/tasks", headers=beta_headers).json() == []
+            assert client.get(f"/api/tasks/{task.json()['id']}", headers=beta_headers).status_code == 404
+
+            debt = client.post("/api/tech-debt", json={
+                "title": "Alpha debt", "scope": "src/app.ts", "repo_url": "https://github.com/example/repo",
+                "description": "Hardcoded value.", "mitigation": "Read from config.", "current_state": "Still open.",
+                "urgency": "medium", "impact": "Breaks deploys.",
+            }, headers=alpha_headers)
+            assert debt.status_code == 201, debt.text
+            assert client.get("/api/tech-debt", headers=beta_headers).json() == []
+            assert client.get(f"/api/tech-debt/{debt.json()['id']}", headers=beta_headers).status_code == 404
+    finally:
+        main.app.dependency_overrides.clear()
+        test_engine.dispose()
+
+
+def test_mcp_tools_forward_the_callers_credential(monkeypatch) -> None:
+    """Every MCP tool must hand the caller's own key to the API, never the shared env token."""
+    calls: list[tuple[str, str, str]] = []
+
+    async def fake_api_request(method, path, payload=None, authorization=""):
+        calls.append((method, path, authorization))
+        if method == "GET":
+            return []
+        return {"id": "x", "title": "t", "repo_url": "r", "urgency": "low", "status": "open"}
+
+    monkeypatch.setattr(mcp_server, "api_request", fake_api_request)
+    monkeypatch.setattr(main.settings, "mcp_allowed_hosts", "updater.example.test")
+    monkeypatch.setattr(main.settings, "updater_token", "server-token")
+
+    test_engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(test_engine)
+    session_factory = sessionmaker(bind=test_engine)
+    # The MCP transport authorizes through the module-level SessionLocal, not the
+    # FastAPI dependency override, so point it at the same throwaway database.
+    monkeypatch.setattr(main, "SessionLocal", session_factory)
+
+    def call_tool(client: TestClient, name: str, arguments: dict, key: str):
+        response = client.post(
+            "/mcp",
+            headers={"Accept": "application/json, text/event-stream", "Authorization": f"Bearer {key}"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": arguments}},
+        )
+        assert response.status_code == 200, response.text
+        result = response.json()["result"]
+        assert not result.get("isError"), result["content"][0]["text"]
+        return result
+
+    client = _signed_in_client(test_engine, base_url="https://updater.example.test")
+    try:
+        with client:
+            alpha = _register_account(client, "alpha@example.com")
+            beta = _register_account(client, "beta@example.com")
+            gamma = _register_account(client, "gamma@example.com")
+            call_tool(client, "publish_feature", {
+                "title": "T", "summary": "S", "repo_url": "https://github.com/a/b",
+                "why": "W", "how_it_works": "H", "impact": "I", "files_changed": [], "tags": [],
+            }, alpha)
+            call_tool(client, "list_feature_updates", {"query": ""}, beta)
+            call_tool(client, "report_tech_debt", {
+                "title": "D", "scope": "s", "description": "d", "mitigation": "m", "impact": "i",
+                "current_state": "open", "urgency": "low", "repo_url": "https://github.com/example/repo",
+            }, gamma)
+    finally:
+        main.app.dependency_overrides.clear()
+        test_engine.dispose()
+
+    forwarded = [authorization for _, _, authorization in calls]
+    assert forwarded == ["Bearer " + alpha, "Bearer " + beta, "Bearer " + gamma]
+
+
+def test_mcp_list_tools_return_every_row(monkeypatch) -> None:
+    """FastMCP truncates a raw list result to one element, so list tools wrap their rows."""
+    rows = [
+        {"id": str(index), "title": f"Feature {index}", "summary": "s", "repo_url": "https://github.com/example/repo", "shipped_at": "2026-09-30T00:00:00"}
+        for index in range(3)
+    ]
+
+    async def fake_api_request(method, path, payload=None, authorization=""):
+        return rows
+
+    monkeypatch.setattr(mcp_server, "api_request", fake_api_request)
+    monkeypatch.setattr(main.settings, "mcp_allowed_hosts", "updater.example.test")
+    test_engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(test_engine)
+    session_factory = sessionmaker(bind=test_engine)
+    monkeypatch.setattr(main, "SessionLocal", session_factory)
+    client = _signed_in_client(test_engine, base_url="https://updater.example.test")
+    try:
+        with client:
+            key = _register_account(client, "lister@example.com")
+            listed = client.post(
+                "/mcp",
+                headers={"Accept": "application/json, text/event-stream", "Authorization": f"Bearer {key}"},
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "list_feature_updates", "arguments": {"query": ""}}},
+            )
+            assert listed.status_code == 200, listed.text
+            result = listed.json()["result"]
+            assert not result.get("isError"), result["content"][0]["text"]
+            payload = json.loads(result["content"][0]["text"])
+            assert isinstance(payload, dict), payload
+            assert payload["count"] == 3
+            assert {item["title"] for item in payload["updates"]} == {"Feature 0", "Feature 1", "Feature 2"}
+    finally:
+        main.app.dependency_overrides.clear()
+        test_engine.dispose()
+
+
+def test_backfill_adopts_unowned_rows_and_undo_is_precise(tmp_path, monkeypatch) -> None:
+    """Staged adoption must keep every account's existing view, and undo only its own rows."""
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'backfill.sqlite3'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(test_engine)
+    session_factory = sessionmaker(bind=test_engine)
+    monkeypatch.setattr(backfill_ownership, "SessionLocal", session_factory)
+    monkeypatch.setattr(backfill_ownership, "engine", test_engine)
+
+    def make_update(user_id, title, repo):
+        return Update(user_id=user_id, title=title, summary="s" * 12, repo_url=repo,
+                      why="w" * 12, how_it_works="h" * 12, impact="i" * 12, files_changed=[], tags=[])
+
+    with session_factory() as db:
+        alpha = User(email="alpha@example.com", password_hash=auth_utils.hash_password("correct horse battery"))
+        beta = User(email="beta@example.com", password_hash=auth_utils.hash_password("correct horse battery"))
+        db.add_all([alpha, beta])
+        db.commit()
+        db.refresh(alpha)
+        db.refresh(beta)
+        alpha_id = alpha.id
+        beta_id = beta.id
+        # Three rows the buggy server wrote with no owner, plus one genuinely owned by alpha.
+        db.add_all([
+            make_update(None, "Legacy A", "https://github.com/alpha/one"),
+            make_update(None, "Legacy B", "https://github.com/alpha/two"),
+            make_update(None, "Legacy other", "https://github.com/someone/three"),
+            make_update(alpha_id, "Alpha own", "https://github.com/alpha/four"),
+        ])
+        db.add(Note(user_id=None, title="Legacy note"))
+        db.commit()
+
+    # Before adopting, both accounts see every unowned row: the fix changes nobody's view.
+    with session_factory() as db:
+        for owner in (None, alpha_id):
+            seen = len(db.scalars(select(Update).where(main._ownership_clause(Update, owner))).all())
+            assert seen == 4, seen
+
+    # Adopt only alpha's two repos, leaving the unrelated row and the unowned note alone.
+    run_id = "test-run"
+    argv = ["--email", "alpha@example.com", "--repo", "github.com/alpha", "--run-id", run_id]
+    monkeypatch.setattr("sys.argv", ["backfill", *argv])
+    assert backfill_ownership.main() == 0
+
+    with session_factory() as db:
+        adopted = {u.title for u in db.scalars(select(Update).where(Update.user_id == alpha_id)).all()}
+        assert adopted == {"Legacy A", "Legacy B", "Alpha own"}, adopted
+        still_unowned = {u.title for u in db.scalars(select(Update).where(Update.user_id.is_(None))).all()}
+        assert still_unowned == {"Legacy other"}, still_unowned
+        # Beta's view is unchanged: the unrelated legacy row is still visible to it.
+        beta_view = {u.title for u in db.scalars(select(Update).where(main._ownership_clause(Update, beta_id))).all()}
+        assert beta_view == {"Legacy other"}, beta_view
+
+    # Undo returns exactly the two adopted legacy rows, never alpha's pre-existing one.
+    monkeypatch.setattr("sys.argv", ["backfill", "--undo", "--run-id", run_id])
+    assert backfill_ownership.main() == 0
+    with session_factory() as db:
+        owned = {u.title for u in db.scalars(select(Update).where(Update.user_id == alpha_id)).all()}
+        assert owned == {"Alpha own"}, owned
+        unowned = {u.title for u in db.scalars(select(Update).where(Update.user_id.is_(None))).all()}
+        assert unowned == {"Legacy A", "Legacy B", "Legacy other"}, unowned
+    test_engine.dispose()
