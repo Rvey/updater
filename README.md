@@ -15,17 +15,17 @@ Updater is an open-source shipping log for work done with coding agents. When an
 
 ## Live deployment
 
-Deployed API: <https://updaterapi.blitzgo.io>
+Deployed API: <https://updaterapi.rveybox.dev>
 
-- Health: <https://updaterapi.blitzgo.io/api/health>
-- API docs: <https://updaterapi.blitzgo.io/docs>
-- MCP endpoint: <https://updaterapi.blitzgo.io/mcp>
-- Connect script: <https://updaterapi.blitzgo.io/connect.sh>
+- Health: <https://updaterapi.rveybox.dev/api/health>
+- API docs: <https://updaterapi.rveybox.dev/docs>
+- MCP endpoint: <https://updaterapi.rveybox.dev/mcp>
+- Connect script: <https://updaterapi.rveybox.dev/connect.sh>
 
 Connect an agent to the deployed version:
 
 ```bash
-curl -fsSL https://updaterapi.blitzgo.io/connect.sh | bash
+curl -fsSL https://updaterapi.rveybox.dev/connect.sh | bash
 ```
 
 It prompts for your API key (`upk_…` from the web UI **Settings → API keys**), then lets you pick agents (one or many). No `--url` / `--agents` flags needed — the script already defaults to this server.
@@ -119,7 +119,7 @@ One command sets up everything — MCP access plus the `/updater`, `/updater-shi
 Deployed version:
 
 ```bash
-curl -fsSL https://updaterapi.blitzgo.io/connect.sh | bash
+curl -fsSL https://updaterapi.rveybox.dev/connect.sh | bash
 ```
 
 Local preview:
@@ -196,12 +196,12 @@ LLM_MODEL=google/gemini-3.5-flash-lite
 
 See [DEPLOY.md](DEPLOY.md) for Dokploy (Compose app, external Postgres, `compose.dokploy.yml`, `web` on port 80 + `api` on port 8000, HTTPS for both).
 
-Deployed version: API is live at <https://updaterapi.blitzgo.io> (`compose.dokploy.yml` already defaults `UPDATER_API_URL` / `MCP_ALLOWED_HOSTS` to that host).
+Deployed version: API is live at <https://updaterapi.rveybox.dev> (`compose.dokploy.yml` already defaults `UPDATER_API_URL` / `MCP_ALLOWED_HOSTS` to that host).
 
 ```bash
 curl -f https://api.example.com/api/health
 curl -f https://app.example.com/healthz
-curl -f https://updaterapi.blitzgo.io/api/health
+curl -f https://updaterapi.rveybox.dev/api/health
 ```
 
 ## API + MCP reference
