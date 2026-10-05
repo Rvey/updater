@@ -11,13 +11,13 @@ import {
 import "./homepage.css";
 import "./vibrant.css";
 
-export const CONNECT_CMD = "curl -fsSL https://updaterapi.blitzgo.io/connect.sh | bash";
+export const CONNECT_CMD = "curl -fsSL https://updaterapi.rveybox.dev/connect.sh | bash";
 export const LINKS = {
   github: "https://github.com/Rvey/updater",
   mit: "https://github.com/Rvey/updater/blob/main/LICENSE",
-  api: "https://updaterapi.blitzgo.io",
-  docs: "https://updaterapi.blitzgo.io/docs",
-  mcp: "https://updaterapi.blitzgo.io/mcp",
+  api: "https://updaterapi.rveybox.dev",
+  docs: "https://updaterapi.rveybox.dev/docs",
+  mcp: "https://updaterapi.rveybox.dev/mcp",
   app: "/app",
 };
 
@@ -631,7 +631,7 @@ function Footer() {
         </div>
         <div className="mk-foot-bottom">
           <span>Built for developers shipping with agents.</span>
-          <span className="mk-mcp-pill"><i />MCP ENDPOINT · https://updaterapi.blitzgo.io/mcp</span>
+          <span className="mk-mcp-pill"><i />MCP ENDPOINT · https://updaterapi.rveybox.dev/mcp</span>
         </div>
       </div>
     </footer>

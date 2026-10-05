@@ -8,8 +8,8 @@ services:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL to the external PostgreSQL URL}
       UPDATER_TOKEN: ${UPDATER_TOKEN:?set a long random UPDATER_TOKEN}
       CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS to the public web origin}
-      UPDATER_API_URL: ${UPDATER_API_URL:-https://updaterapi.blitzgo.io}
-      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-updaterapi.blitzgo.io}
+      UPDATER_API_URL: ${UPDATER_API_URL:-https://updaterapi.rveybox.dev}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-updaterapi.rveybox.dev}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-google/gemini-3.5-flash-lite}
     healthcheck:
