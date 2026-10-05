@@ -9,6 +9,7 @@ import {
   X,
 } from "lucide-react";
 import "./homepage.css";
+import "./vibrant.css";
 
 export const CONNECT_CMD = "curl -fsSL https://updaterapi.blitzgo.io/connect.sh | bash";
 export const LINKS = {
@@ -130,6 +131,74 @@ function Nav() {
   );
 }
 
+
+const FEED = [
+  ["Kanban task board", "claude-code", "acme/web"],
+  ["Token refresh retry fix", "codex", "acme/api"],
+  ["Instant search across ship log", "cursor", "acme/web"],
+  ["Postgres connection pooling", "opencode", "acme/api"],
+  ["Tech-debt inbox", "claude-code", "acme/web"],
+] as const;
+
+function ShipTicker() {
+  const [i, setI] = useState(0);
+  const [count, setCount] = useState(25);
+  useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const id = window.setInterval(() => {
+      setI((v) => (v + 1) % FEED.length);
+      setCount((c) => c + 1);
+    }, 3200);
+    return () => window.clearInterval(id);
+  }, []);
+  const [title, agent, repo] = FEED[i];
+  return (
+    <div className="mk-ticker" role="status" aria-label="Example of a live ship log feed">
+      <span className="live"><i aria-hidden="true" />LIVE</span>
+      <span className="item" key={i}><b>{agent}</b> <em>shipped</em> {title} <em>· {repo}</em></span>
+      <span className="count" aria-hidden="true">{count} shipped</span>
+    </div>
+  );
+}
+
+function useVibrance() {
+  useEffect(() => {
+    const root = document.querySelector<HTMLElement>(".mk-page");
+    if (!root) return;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const onScroll = () => {
+      const h = document.documentElement.scrollHeight - window.innerHeight;
+      root.style.setProperty("--p", String(h > 0 ? Math.min(1, window.scrollY / h) : 0));
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    const onMove = (e: PointerEvent) => {
+      const el = (e.target as HTMLElement | null)?.closest?.<HTMLElement>(".mk-spot");
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      el.style.setProperty("--mx", `${e.clientX - r.left}px`);
+      el.style.setProperty("--my", `${e.clientY - r.top}px`);
+    };
+    root.addEventListener("pointermove", onMove);
+    root.querySelectorAll<HTMLElement>(".mk-contrast li, .mk-questions li, .mk-steps > *, .mk-feat-row").forEach((el) => el.classList.add("mk-spot"));
+    let io: IntersectionObserver | undefined;
+    if (!reduce && "IntersectionObserver" in window) {
+      const targets = root.querySelectorAll<HTMLElement>(".mk-section .mk-wrap > *, .mk-contrast li, .mk-questions li, .mk-steps > *, .mk-feat-row");
+      io = new IntersectionObserver((entries) => entries.forEach((e) => {
+        if (e.isIntersecting) { e.target.classList.add("seen"); io?.unobserve(e.target); }
+      }), { threshold: 0.12, rootMargin: "0px 0px -6% 0px" });
+      targets.forEach((el, n) => { el.classList.add("mk-fx"); el.style.setProperty("--d", `${(n % 4) * 0.06}s`); io!.observe(el); });
+      root.classList.add("mk-js");
+    }
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      root.removeEventListener("pointermove", onMove);
+      io?.disconnect();
+      root.classList.remove("mk-js");
+    };
+  }, []);
+}
+
 function Hero() {
   const frameRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -145,6 +214,7 @@ function Hero() {
   }, []);
   return (
     <section className="mk-hero" aria-labelledby="hero-headline">
+      <div className="mk-aurora" aria-hidden="true"><i /><i /><i /></div>
       <div className="mk-hero-grid">
         <p className="mk-eyebrow mk-reveal" style={{ animationDelay: "0.02s" }}>
           <span className="pulse" aria-hidden="true" />
@@ -161,6 +231,7 @@ function Hero() {
         </p>
         <div className="mk-reveal" style={{ animationDelay: "0.32s" }}>
           <CommandBlock caption="One command connects Codex, Claude Code, Cursor, or OpenCode." />
+          <ShipTicker />
         </div>
         <div className="mk-hero-actions mk-reveal" style={{ animationDelay: "0.4s" }}>
           <a className="mk-btn mk-btn-primary" href={LINKS.github} target="_blank" rel="noreferrer">Explore on GitHub <ArrowUpRight size={16} /></a>
@@ -568,12 +639,14 @@ function Footer() {
 }
 
 export default function Homepage() {
+  useVibrance();
   useEffect(() => {
     document.title = "Updater — your open-source shipping memory";
   }, []);
   return (
     <div className="mk-page" id="top">
       <a className="mk-skip-link" href="#main">Skip to content</a>
+      <div className="mk-progress" aria-hidden="true" />
       <Nav />
       <main id="main">
         <Hero />
