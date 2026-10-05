@@ -40,7 +40,8 @@ VALIDATE_ONLY=0
 _TOKEN_VALIDATED=0
 
 usage() {
-  sed -n "1,60p" "$0"
+  # $0 is just "bash" when piped from curl, so only print the header from a real file
+  if [ -f "$0" ]; then sed -n "1,26p" "$0"; fi
   echo ""
   echo "Flags:"
   echo "  --url URL            MCP server URL ending in /mcp (required)"
@@ -66,9 +67,28 @@ usage() {
 }
 
 log() { printf "%s\n" "$*"; }
-run() {
-  if [ "$DRY_RUN" = "1" ]; then printf "[dry-run] %s\n" "$*"; else eval "$*"; fi
+FAILURES=0
+WRITE_FAILS=0
+SUMMARY=''
+record() { # record <agent> <step> <ok|skipped|FAILED> [note]
+  SUMMARY="$SUMMARY$(printf '  %-9s %-9s %s%s' "$1" "$2" "$3" "${4:+ ($4)}")
+"
+  if [ "$3" = "FAILED" ]; then FAILURES=$((FAILURES + 1)); fi
 }
+mask() {
+  _m="$*"
+  if [ -n "$TOKEN" ]; then _m="${_m//"$TOKEN"/****}"; fi
+  if [ -n "${UPDATER_TOKEN:-}" ]; then _m="${_m//"$UPDATER_TOKEN"/****}"; fi
+  printf '%s' "$_m"
+}
+# Run argv directly (no eval, so tokens with quotes/$ cannot break or inject).
+# stdin is detached so a CLI can never swallow the rest of a piped script.
+run() {
+  log "→ $(mask "$*")"
+  if [ "$DRY_RUN" = "1" ]; then return 0; fi
+  "$@" </dev/null
+}
+run_quiet() { if [ "$DRY_RUN" = "1" ]; then return 0; fi; "$@" </dev/null >/dev/null 2>&1; }
 has() { command -v "$1" >/dev/null 2>&1; }
 wants() {
   case ",$AGENTS," in *,all,*|*,"$1",*) return 0;; *) return 1;; esac
@@ -172,8 +192,12 @@ api_base_from_url() {
 check_token_shape() {
   _s_tok="$1"
   case "$_s_tok" in
-    *' '*|*$'\t'*|*$'\n'*)
+    *' '*|*$'\t'*|*$'\n'*|*$'\r'*)
       printf 'token contains whitespace — it was probably truncated or pasted with extra characters'
+      return 1
+      ;;
+    *'"'*|*\\*|*"'"*)
+      printf 'token contains quote or backslash characters — it was probably pasted wrong'
       return 1
       ;;
   esac
@@ -199,9 +223,10 @@ _token_http_get() {
   : > "$_h_out" 2>/dev/null || true
   if has curl; then
     if [ -n "$_h_tok" ]; then
-      _h_code="$(curl -s -m 10 -o "$_h_out" -w '%{http_code}' -H "Authorization: Bearer $_h_tok" "$_h_url" 2>/dev/null)" || _h_code="000"
+      # token goes over stdin (-K -) so it never appears in the process list
+      _h_code="$(printf 'header = "Authorization: Bearer %s"\n' "$_h_tok" | curl -s -m 10 --retry 2 --retry-connrefused -o "$_h_out" -w '%{http_code}' -K - "$_h_url" 2>/dev/null)" || _h_code="000"
     else
-      _h_code="$(curl -s -m 10 -o "$_h_out" -w '%{http_code}' "$_h_url" 2>/dev/null)" || _h_code="000"
+      _h_code="$(curl -s -m 10 --retry 2 --retry-connrefused -o "$_h_out" -w '%{http_code}' "$_h_url" 2>/dev/null)" || _h_code="000"
     fi
     case "$_h_code" in ''|*[!0-9]*) _h_code="000" ;; esac
     printf '%s' "$_h_code"
@@ -413,13 +438,23 @@ run_token_validation() {
   return 1
 }
 
+# Everything below the helpers runs inside main(), invoked on the LAST line.
+# bash must parse the whole function before running it, so a download that is
+# cut off mid-stream (curl | bash) fails with a syntax error instead of
+# executing half an install.
+main() {
 while [ $# -gt 0 ]; do
   case "$1" in
-    --url) MCP_URL="$2"; shift 2;;
-    --agents) AGENTS="$2"; AGENTS_GIVEN=1; shift 2;;
-    --scope) SCOPE="$2"; SCOPE_GIVEN=1; shift 2;;
-    --project-dir) PROJECT_DIR="$2"; shift 2;;
-    --token) TOKEN="$2"; shift 2;;
+    --url|--agents|--scope|--project-dir|--token)
+      if [ $# -lt 2 ]; then echo "Flag $1 needs a value." >&2; usage >&2; exit 1; fi
+      case "$1" in
+        --url) MCP_URL="$2";;
+        --agents) AGENTS="$2"; AGENTS_GIVEN=1;;
+        --scope) SCOPE="$2"; SCOPE_GIVEN=1;;
+        --project-dir) PROJECT_DIR="$2";;
+        --token) TOKEN="$2";;
+      esac
+      shift 2;;
     --skip-mcp) SKIP_MCP=1; shift;;
     --skip-commands) SKIP_COMMANDS=1; shift;;
     --dry-run) DRY_RUN=1; shift;;
@@ -507,31 +542,33 @@ fi
 
 # ---- MCP add ----
 add_mcp_opencode() {
-  if ! has opencode; then log "skip opencode mcp: binary not found"; return 0; fi
-  cmd="opencode mcp add updater"
-  if [ "$SCOPE" = "global" ]; then cmd="$cmd --global"; fi
-  cmd="$cmd --url \"$MCP_URL\""
-  if [ "$AUTH_MODE" = "embedded" ]; then cmd="$cmd --header \"Authorization=Bearer $TOKEN\"";
-  elif [ "$AUTH_MODE" = "env" ]; then cmd="$cmd --header \"Authorization=Bearer {env:UPDATER_TOKEN}\""; fi
-  log "→ $cmd"; run "$cmd || true"
+  if ! has opencode; then log "skip opencode mcp: binary not found"; record opencode mcp skipped "binary not found"; return 0; fi
+  set -- opencode mcp add updater
+  if [ "$SCOPE" = "global" ]; then set -- "$@" --global; fi
+  set -- "$@" --url "$MCP_URL"
+  if [ "$AUTH_MODE" = "embedded" ]; then set -- "$@" --header "Authorization=Bearer $TOKEN";
+  elif [ "$AUTH_MODE" = "env" ]; then set -- "$@" --header "Authorization=Bearer {env:UPDATER_TOKEN}"; fi
+  if run "$@"; then record opencode mcp ok; else record opencode mcp FAILED "opencode mcp add exited non-zero"; fi
 }
 add_mcp_codex() {
-  if ! has codex; then log "skip codex mcp: binary not found"; return 0; fi
-  cmd="codex mcp add updater --url \"$MCP_URL\""
-  if [ "$AUTH_MODE" = "embedded" ]; then cmd="$cmd --bearer-token \"$TOKEN\"";
-  elif [ "$AUTH_MODE" = "env" ]; then cmd="$cmd --bearer-token-env-var UPDATER_TOKEN"; fi
-  log "→ $cmd"; run "$cmd || true"
+  if ! has codex; then log "skip codex mcp: binary not found"; record codex mcp skipped "binary not found"; return 0; fi
+  # re-running must replace a stale entry instead of failing on "already exists"
+  run_quiet codex mcp remove updater || true
+  set -- codex mcp add updater --url "$MCP_URL"
+  if [ "$AUTH_MODE" = "embedded" ]; then set -- "$@" --bearer-token "$TOKEN";
+  elif [ "$AUTH_MODE" = "env" ]; then set -- "$@" --bearer-token-env-var UPDATER_TOKEN; fi
+  if run "$@"; then record codex mcp ok; else record codex mcp FAILED "codex mcp add exited non-zero"; fi
   log "  (codex mcp add writes user config; no separate project/global flag)"
 }
 add_mcp_claude() {
-  if ! has claude; then log "skip claude mcp: binary not found"; return 0; fi
-  scope_flag="--scope user"; if [ "$SCOPE" = "project" ]; then scope_flag="--scope project"; fi
-  cmd="claude mcp add --transport http $scope_flag updater \"$MCP_URL\""
-  if [ "$AUTH_MODE" = "embedded" ]; then cmd="$cmd --header \"Authorization: Bearer $TOKEN\"";
-  elif [ "$AUTH_MODE" = "env" ]; then cmd="$cmd --header \"Authorization: Bearer $UPDATER_TOKEN\""; fi
-  log "→ $cmd"; run "$cmd || true"
+  if ! has claude; then log "skip claude mcp: binary not found"; record claude mcp skipped "binary not found"; return 0; fi
+  _scope=user; if [ "$SCOPE" = "project" ]; then _scope=project; fi
+  run_quiet claude mcp remove --scope "$_scope" updater || true
+  set -- claude mcp add --transport http --scope "$_scope" updater "$MCP_URL"
+  if [ "$AUTH_MODE" = "embedded" ]; then set -- "$@" --header "Authorization: Bearer $TOKEN";
+  elif [ "$AUTH_MODE" = "env" ]; then set -- "$@" --header "Authorization: Bearer $UPDATER_TOKEN"; fi
+  if run "$@"; then record claude mcp ok; else record claude mcp FAILED "claude mcp add exited non-zero"; fi
 }
-
 # ---- command file writers (self-contained: no repo checkout needed) ----
 add_mcp_cursor() {
   if [ "$SCOPE" = "global" ]; then mcp_file="$HOME/.cursor/mcp.json"; else mcp_file="$PROJECT_DIR/.cursor/mcp.json"; fi
@@ -539,21 +576,30 @@ add_mcp_cursor() {
   if ! has python3; then
     log "skip cursor mcp: python3 not found. Add manually to $mcp_file:"
     log "{\"mcpServers\": {\"updater\": {\"url\": \"$MCP_URL\"}}}"
+    record cursor mcp skipped "python3 missing"
     return 0
   fi
-  UPDATER_MCP_URL="$MCP_URL" UPDATER_MCP_FILE="$mcp_file" UPDATER_MCP_TOKEN="$TOKEN" UPDATER_AUTH_MODE="$AUTH_MODE" python3 - <<'PYEOF'
-import json, os
+  if UPDATER_MCP_URL="$MCP_URL" UPDATER_MCP_FILE="$mcp_file" UPDATER_MCP_TOKEN="$TOKEN" UPDATER_AUTH_MODE="$AUTH_MODE" python3 - <<'PYEOF'
+import json, os, shutil, sys, tempfile
 path = os.environ["UPDATER_MCP_FILE"]
 url = os.environ["UPDATER_MCP_URL"]
 mode = os.environ.get("UPDATER_AUTH_MODE", "none")
 token = os.environ.get("UPDATER_MCP_TOKEN", "")
-try:
-    with open(path) as f:
-        data = json.load(f)
-except (FileNotFoundError, ValueError):
-    data = {}
-if not isinstance(data, dict):
-    data = {}
+data = {}
+if os.path.exists(path):
+    try:
+        with open(path) as f:
+            raw = f.read()
+        data = json.loads(raw) if raw.strip() else {}
+    except ValueError as exc:
+        # never overwrite a config we cannot parse: the user's other servers would be lost
+        print("ERROR: " + path + " is not valid JSON (" + str(exc) + "); leaving it untouched.", file=sys.stderr)
+        print('Fix it, or add manually: "updater": {"url": "' + url + '"} under "mcpServers".', file=sys.stderr)
+        sys.exit(1)
+    if not isinstance(data, dict):
+        print("ERROR: " + path + " is not a JSON object; leaving it untouched.", file=sys.stderr)
+        sys.exit(1)
+    shutil.copy2(path, path + ".bak")
 servers = data.get("mcpServers")
 if not isinstance(servers, dict):
     servers = {}
@@ -564,22 +610,51 @@ if mode == "embedded":
 elif mode == "env":
     entry["headers"] = {"Authorization": "Bearer ${env:UPDATER_TOKEN}"}
 servers["updater"] = entry
-parent = os.path.dirname(path)
-if parent:
-    os.makedirs(parent, exist_ok=True)
-with open(path, "w") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
+parent = os.path.dirname(path) or "."
+os.makedirs(parent, exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=parent, prefix=".mcp.json.")
+try:
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    if mode == "embedded":
+        os.chmod(tmp, 0o600)  # file now holds a credential
+    elif os.path.exists(path):
+        shutil.copymode(path, tmp)
+    os.replace(tmp, path)  # atomic: never leaves a half-written config
+except Exception:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+    raise
 print("wrote " + path)
 PYEOF
-  log "Restart Cursor completely so it picks up the MCP server."
+  then
+    record cursor mcp ok
+    log "Restart Cursor completely so it picks up the MCP server."
+  else
+    record cursor mcp FAILED "could not update $mcp_file"
+  fi
 }
-
-write_file() { dest="$1"; if [ "$DRY_RUN" = "1" ]; then printf "[dry-run] write %s\n" "$dest"; else mkdir -p "$(dirname "$dest")"; cat > "$dest"; log "wrote $dest"; fi; }
-
+write_file() {
+  dest="$1"
+  if [ "$DRY_RUN" = "1" ]; then printf "[dry-run] write %s\n" "$dest"; cat >/dev/null; return 0; fi
+  if ! mkdir -p "$(dirname "$dest")" 2>/dev/null || ! _wf_tmp="$(mktemp "$dest.XXXXXX" 2>/dev/null)"; then
+    log "ERROR: cannot write $dest"
+    cat >/dev/null
+    WRITE_FAILS=$((WRITE_FAILS + 1))
+    return 0
+  fi
+  if cat > "$_wf_tmp" && mv -f "$_wf_tmp" "$dest"; then
+    log "wrote $dest"
+  else
+    rm -f "$_wf_tmp"
+    WRITE_FAILS=$((WRITE_FAILS + 1))
+    return 0
+  fi
+}
 install_claude() {
   if [ "$SCOPE" = "global" ]; then base="$HOME/.claude/commands"; else base="$PROJECT_DIR/.claude/commands"; fi
-  if [ "$DRY_RUN" != "1" ]; then mkdir -p "$base"; fi
+  if [ "$DRY_RUN" != "1" ]; then mkdir -p "$base" || return 1; fi
   write_file "$base/updater-ship.md" <<'CMD_EOF'
 ---
 description: Ship verified work to Updater (publish_feature with code context)
@@ -680,7 +755,7 @@ CMD_EOF
 
 install_opencode() {
   if [ "$SCOPE" = "global" ]; then base="$HOME/.config/opencode/commands"; else base="$PROJECT_DIR/.opencode/commands"; fi
-  if [ "$DRY_RUN" != "1" ]; then mkdir -p "$base"; fi
+  if [ "$DRY_RUN" != "1" ]; then mkdir -p "$base" || return 1; fi
   write_file "$base/updater-ship.md" <<'CMD_EOF'
 ---
 description: Ship verified work to Updater (publish_feature with code context)
@@ -770,7 +845,7 @@ CMD_EOF
 
 install_codex() {
   if [ "$SCOPE" = "global" ]; then prompts="$HOME/.codex/prompts"; skills="$HOME/.codex/skills"; else prompts="$PROJECT_DIR/.codex/prompts"; skills="$PROJECT_DIR/.codex/skills"; fi
-  if [ "$DRY_RUN" != "1" ]; then mkdir -p "$prompts" "$skills/updater-ship" "$skills/updater-check" "$skills/updater-impact" "$skills/updater" "$skills/tech-depth"; fi
+  if [ "$DRY_RUN" != "1" ]; then mkdir -p "$prompts" "$skills/updater-ship" "$skills/updater-check" "$skills/updater-impact" "$skills/updater" "$skills/tech-depth" || return 1; fi
   write_file "$prompts/updater-ship.md" <<'CMD_EOF'
 Publish the just-finished, verified work to Updater via MCP.
 
@@ -870,7 +945,7 @@ CMD_EOF
 
 install_cursor() {
   if [ "$SCOPE" = "global" ]; then base="$HOME/.cursor/commands"; else base="$PROJECT_DIR/.cursor/commands"; fi
-  if [ "$DRY_RUN" != "1" ]; then mkdir -p "$base"; fi
+  if [ "$DRY_RUN" != "1" ]; then mkdir -p "$base" || return 1; fi
   write_file "$base/updater-ship.md" <<'CMD_EOF'
 # Updater ship - publish verified work to Updater
 
@@ -953,10 +1028,26 @@ if [ "$SKIP_MCP" != "1" ]; then
   wants claude && add_mcp_claude
   wants cursor && add_mcp_cursor
 else log "skip mcp add (--skip-mcp)"; fi
+# a failed command-file step must not abort the remaining agents
+install_agent_commands() {
+  _before=$WRITE_FAILS
+  "$1" || WRITE_FAILS=$((WRITE_FAILS + 1))
+  if [ "$WRITE_FAILS" = "$_before" ]; then record "${1#install_}" commands ok; else record "${1#install_}" commands FAILED "could not write command files"; fi
+}
 if [ "$SKIP_COMMANDS" != "1" ]; then
-  wants opencode && install_opencode
-  wants codex && install_codex
-  wants claude && install_claude
-  wants cursor && install_cursor
+  wants opencode && install_agent_commands install_opencode
+  wants codex && install_agent_commands install_codex
+  wants claude && install_agent_commands install_claude
+  wants cursor && install_agent_commands install_cursor
 else log "skip commands (--skip-commands)"; fi
+log ""
+log "Summary:"
+printf '%s' "$SUMMARY"
+if [ "$FAILURES" -gt 0 ]; then
+  echo "ERROR: $FAILURES step(s) failed; see output above. Re-running this script is safe (it replaces the previous install)." >&2
+  exit 1
+fi
 log "done. Verify: opencode/codex/claude mcp list, Cursor Settings -> MCP Tools (green dot), then /updater-ship or /tech-depth"
+}
+
+main "$@"

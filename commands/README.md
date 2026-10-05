@@ -81,3 +81,13 @@ cp -R commands/codex/skills/* .codex/skills/
 ```
 
 You still need the MCP connected (`opencode mcp add ...` / `codex mcp add ...` / `claude mcp add ...`). The command just invokes the already-connected `updater` MCP tools.
+
+## Installer guarantees
+
+- **Safe to pipe**: the script body runs inside `main()` called on the last line, so a truncated `curl | bash` download is a syntax error, not a half install.
+- **Safe to re-run**: existing `updater` MCP entries are replaced, files are written atomically, and `~/.cursor/mcp.json` is backed up to `mcp.json.bak`. An unparsable `mcp.json` is never overwritten.
+- **Token hygiene**: tokens are passed as argv (never `eval`ed), masked in logs, sent to the server check over stdin, and a Cursor config holding one is `chmod 600`.
+- **Honest result**: it prints a per-agent summary and exits non-zero if any step failed.
+
+`backend/app/connect.sh` must stay a byte-identical copy of `commands/install.sh` (`cp commands/install.sh backend/app/connect.sh`); a test enforces it.
+
