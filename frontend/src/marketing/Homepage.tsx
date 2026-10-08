@@ -161,39 +161,30 @@ function ShipTicker() {
   );
 }
 
-function useVibrance() {
+function useReveal() {
   useEffect(() => {
     const root = document.querySelector<HTMLElement>(".mk-page");
-    if (!root) return;
-    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const onScroll = () => {
-      const h = document.documentElement.scrollHeight - window.innerHeight;
-      root.style.setProperty("--p", String(h > 0 ? Math.min(1, window.scrollY / h) : 0));
+    if (!root || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const pending = new Set(root.querySelectorAll<HTMLElement>(".mk-section .mk-wrap > *, .mk-contrast li, .mk-questions li, .mk-steps > *, .mk-feat-row"));
+    // Scroll-checked (not IntersectionObserver) so a fast jump can never leave a section hidden.
+    let raf = 0;
+    const reveal = () => {
+      raf = 0;
+      const edge = window.innerHeight * 0.94;
+      pending.forEach((el) => {
+        if (el.getBoundingClientRect().top < edge) { el.classList.add("seen"); pending.delete(el); }
+      });
     };
-    onScroll();
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(reveal); };
+    pending.forEach((el) => el.classList.add("mk-fx"));
+    root.classList.add("mk-js");
+    reveal();
     window.addEventListener("scroll", onScroll, { passive: true });
-    const onMove = (e: PointerEvent) => {
-      const el = (e.target as HTMLElement | null)?.closest?.<HTMLElement>(".mk-spot");
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      el.style.setProperty("--mx", `${e.clientX - r.left}px`);
-      el.style.setProperty("--my", `${e.clientY - r.top}px`);
-    };
-    root.addEventListener("pointermove", onMove);
-    root.querySelectorAll<HTMLElement>(".mk-contrast li, .mk-questions li, .mk-steps > *, .mk-feat-row").forEach((el) => el.classList.add("mk-spot"));
-    let io: IntersectionObserver | undefined;
-    if (!reduce && "IntersectionObserver" in window) {
-      const targets = root.querySelectorAll<HTMLElement>(".mk-section .mk-wrap > *, .mk-contrast li, .mk-questions li, .mk-steps > *, .mk-feat-row");
-      io = new IntersectionObserver((entries) => entries.forEach((e) => {
-        if (e.isIntersecting) { e.target.classList.add("seen"); io?.unobserve(e.target); }
-      }), { threshold: 0.12, rootMargin: "0px 0px -6% 0px" });
-      targets.forEach((el, n) => { el.classList.add("mk-fx"); el.style.setProperty("--d", `${(n % 4) * 0.06}s`); io!.observe(el); });
-      root.classList.add("mk-js");
-    }
+    window.addEventListener("resize", onScroll);
     return () => {
       window.removeEventListener("scroll", onScroll);
-      root.removeEventListener("pointermove", onMove);
-      io?.disconnect();
+      window.removeEventListener("resize", onScroll);
+      if (raf) cancelAnimationFrame(raf);
       root.classList.remove("mk-js");
     };
   }, []);
@@ -214,20 +205,19 @@ function Hero() {
   }, []);
   return (
     <section className="mk-hero" aria-labelledby="hero-headline">
-      <div className="mk-aurora" aria-hidden="true"><i /><i /><i /></div>
       <div className="mk-hero-grid">
         <p className="mk-eyebrow mk-reveal" style={{ animationDelay: "0.02s" }}>
           <span className="pulse" aria-hidden="true" />
-          OPEN-SOURCE SHIPPING MEMORY FOR CODING AGENTS
+          OPEN-SOURCE SHIPPING MEMORY · MCP-NATIVE
         </p>
         <h1 className="mk-brand-display mk-reveal" style={{ animationDelay: "0.08s" }} aria-label="Updater.">
           Updater<span className="dot">.</span>
         </h1>
         <h2 id="hero-headline" className="mk-headline mk-reveal" style={{ animationDelay: "0.16s" }}>
-          Your agent ships the code.<br />Updater <span className="hl">remembers why.</span>
+          Memory for <s className="mk-strike">agents</s> <span className="hl">humans.</span>
         </h2>
         <p className="mk-lede mk-reveal" style={{ animationDelay: "0.24s" }}>
-          Keep a searchable record of every verified feature—what changed, why it mattered, how it works, and what happened next.
+          Everyone is building memory for the agent. Nobody keeps what it <strong>shipped</strong> for you — what changed, why it mattered, how it works, and what happened next. Your agent ships the code; Updater remembers why.
         </p>
         <div className="mk-reveal" style={{ animationDelay: "0.32s" }}>
           <CommandBlock caption="One command connects Codex, Claude Code, Cursor, or OpenCode." />
@@ -240,9 +230,6 @@ function Hero() {
         </div>
         <p className="mk-trust mk-reveal" style={{ animationDelay: "0.46s" }}>MIT licensed · Self-hostable · MCP-native · Your code stays in your repo</p>
         <div className="mk-hero-shot mk-reveal" style={{ animationDelay: "0.52s" }}>
-          <span className="mk-anno a1"><i />verified</span>
-          <span className="mk-anno a2"><i />impact recorded</span>
-          <span className="mk-anno a3"><i />context attached</span>
           <div className="mk-shot-frame" ref={frameRef}>
             <div className="mk-shot-bar">
               <span className="mk-traffic" aria-hidden="true"><i style={{ background: "#FF5F57" }} /><i style={{ background: "#FEBC2E" }} /><i style={{ background: "#28C840" }} /></span>
@@ -639,14 +626,13 @@ function Footer() {
 }
 
 export default function Homepage() {
-  useVibrance();
+  useReveal();
   useEffect(() => {
-    document.title = "Updater — your open-source shipping memory";
+    document.title = "Updater — memory for humans, not agents";
   }, []);
   return (
     <div className="mk-page" id="top">
       <a className="mk-skip-link" href="#main">Skip to content</a>
-      <div className="mk-progress" aria-hidden="true" />
       <Nav />
       <main id="main">
         <Hero />
