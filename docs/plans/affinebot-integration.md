@@ -490,3 +490,18 @@ SMOKE TEST (local; do not use production credentials; if a real GitHub App or An
 DOCS (Haiku subagent): update both READMEs and both .env.example files with the env table from the contract, the mint curl, the GitHub App permission set (Metadata:r, Issues:rw, Pull requests:rw, Contents:rw) and webhook URL (https://<updater>/api/github/webhook), the known limits (one owner per link, scrubbed-subprocess sandbox, plaintext secret when UPDATER_SECRET_KEY is unset).
 
 DONE WHEN: all test suites pass, the smoke steps are recorded as pass/fail/not-run with reasons, docs updated, and a final list of open risks is reported (unverified: real GitHub App rate limits, claude CLI flags, production hostnames).
+
+## Decisions taken for v1 (plan defaults, 2026-10-18)
+
+- Work lands on branch `feat/affinebot-integration` (updater) and `feat/updater-link` (Affinebot, cut from `develop`). Previous dirty work is committed in b690a58.
+- Hostnames/URLs come from env (`UPDATER_PUBLIC_URL`, Affinebot base_url on the link row); no hardcoded hosts.
+- GitHub App webhook points directly at updater `POST /api/github/webhook`; no Affinebot forwarder.
+- Permissions set: Metadata:r, Issues:rw, Pull requests:rw, Contents:rw (operator re-approves).
+- Claude Code runs via `ANTHROPIC_API_KEY` with per-job USD cap (default 2.00); any workspace member may delegate.
+- Sandbox v1: scrubbed-env non-root subprocess in the worker (flagged risk).
+- Link secret: Fernet-encrypted when `UPDATER_SECRET_KEY` set, else `plain:` prefix.
+- Legacy rows with NULL owner: the first registered user's default project adopts them during migration.
+- Deleting a project with tasks/notes: refused (409). DB: SQLite (manual ALTER idiom in main.py).
+- Projects are free containers with optional repo_url; updates, tasks, notes and tech debt are project-scoped.
+- One GitHub owner per workspace link.
+- Tests: run updater backend with `env -u UPDATER_TOKEN uv run pytest -q` (shell exports UPDATER_TOKEN); Affinebot with `uv run pytest -q`; frontend with `npm run build`.
