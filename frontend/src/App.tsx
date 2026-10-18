@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  Github as GithubIcon,
   ArrowDownRight,
   ArrowLeft,
   ArrowRight,
@@ -39,6 +40,7 @@ import {
 import type { ImpactNote, NewUpdate, Question, Update, Workspace } from "./types";
 import { NotesView } from "./notes";
 import { TasksView } from "./tasks";
+import { GitHubView } from "./github";
 import { TechDebtView } from "./techdebt";
 import {
   INVITE_STORAGE_KEY,
@@ -1050,7 +1052,7 @@ function WorkspaceApp() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [repo, setRepo] = useState("All updates");
-  const [view, setView] = useState<"updates" | "questions" | "notes" | "tasks" | "tech-debt" | "settings" | "members">("updates");
+  const [view, setView] = useState<"updates" | "questions" | "notes" | "tasks" | "tech-debt" | "github" | "settings" | "members">("updates");
   const [loading, setLoading] = useState(true);
   const [unauthorized, setUnauthorized] = useState(false);
   const [error, setError] = useState("");
@@ -1549,6 +1551,16 @@ function WorkspaceApp() {
           >
             <AlertTriangle size={17} /> Tech debt
           </button>
+          <button
+            className={view === "github" ? "active" : ""}
+            onClick={() => {
+              setView("github");
+              setMobileNav(false);
+              setMobileDetail(false);
+            }}
+          >
+            <GithubIcon size={17} /> GitHub
+          </button>
         </nav>
         <div className="sidebar-section-heading">
           <span>REPOSITORIES</span>
@@ -1613,6 +1625,8 @@ function WorkspaceApp() {
                   ? "Tasks"
                   : view === "settings"
                     ? "Settings"
+                    : view === "github"
+                      ? "GitHub"
                     : view === "tech-debt"
                       ? "Tech debt"
                       : view === "questions"
@@ -1656,7 +1670,15 @@ function WorkspaceApp() {
           ) : view === "notes" ? (
             <NotesView token={token} repos={repositories} projectId={activeProjectId} />
           ) : view === "tasks" ? (
-            <TasksView token={token} repos={repositories} projectId={activeProjectId} />
+            <TasksView token={token} repos={repositories} projectId={activeProjectId} workspaceId={activeWorkspace?.id ?? null} />
+          ) : view === "github" ? (
+            <GitHubView
+              token={token}
+              workspaceId={activeWorkspace?.id ?? null}
+              projectId={activeProjectId}
+              onOpenSettings={() => openSettings("integrations")}
+              onOpenTask={() => setView("tasks")}
+            />
           ) : view === "tech-debt" ? (
             <TechDebtView token={token} repos={repositories} projectId={activeProjectId} />
           ) : view === "settings" ? (

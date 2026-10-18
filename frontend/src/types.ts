@@ -187,6 +187,38 @@ export type GitHubSyncResult = {
   created: number;
   updated: number;
   total: number;
+  truncated?: boolean;
+};
+
+export type GitHubRepo = {
+  full_name: string;
+  private: boolean;
+  default_branch: string;
+  linked: boolean;
+  project_id: string | null;
+};
+
+export type GitHubItem = {
+  number: number;
+  title: string;
+  body: string;
+  state: string;
+  merged: boolean;
+  draft: boolean;
+  url: string;
+  author: string | null;
+  assignees: string[];
+  labels: string[];
+  comments: number;
+  is_pr: boolean;
+  updated_at: string;
+  branch: string | null;
+  task_id: string | null;
+};
+
+export type GitHubItemsPage = {
+  items: GitHubItem[];
+  next_page: number | null;
 };
 
 export type GitHubLink = {

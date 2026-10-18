@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import type {
   GitHubLink,
+  GitHubRepo,
   GitHubSyncResult,
   NewTask,
   Task,
@@ -333,24 +334,23 @@ function GitHubSyncModal({
   unlink,
 }: {
   close: () => void;
+  /** owner/name values from the workspace's Affinebot repo list. */
   repos: string[];
   sync: (value: {
     repo: string;
-    token: string;
     state: string;
     include_issues: boolean;
-    include_pull_requests: boolean;
+    include_prs: boolean;
     live: boolean;
   }) => Promise<void>;
   links: GitHubLink[];
   unlink: (link: GitHubLink) => Promise<void>;
 }) {
   const [form, setForm] = useState({
-    repo: repos.find((r) => /github\.com/i.test(r)) ?? "",
-    token: "",
+    repo: repos[0] ?? "",
     state: "open",
     include_issues: true,
-    include_pull_requests: true,
+    include_prs: true,
     live: true,
   });
   const webhookUrl =
@@ -360,14 +360,14 @@ function GitHubSyncModal({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!form.include_issues && !form.include_pull_requests) {
+    if (!form.include_issues && !form.include_prs) {
       setError("Pick issues, pull requests, or both.");
       return;
     }
     setBusy(true);
     setError("");
     try {
-      await sync({ ...form, repo: form.repo.trim(), token: form.token.trim() });
+      await sync({ ...form, repo: form.repo.trim() });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sync failed");
       setBusy(false);
@@ -404,7 +404,7 @@ function GitHubSyncModal({
               required
               list="tk-gh-repos"
               value={form.repo}
-              placeholder="owner/name or https://github.com/owner/name"
+              placeholder="owner/name"
               onChange={(e) => setForm({ ...form, repo: e.target.value })}
             />
             <datalist id="tk-gh-repos">
@@ -412,19 +412,6 @@ function GitHubSyncModal({
                 <option key={repo} value={repo} />
               ))}
             </datalist>
-          </label>
-          <label className="tk-field">
-            <span>
-              Personal access token <em>used once, never stored</em>
-            </span>
-            <input
-              required
-              type="password"
-              autoComplete="off"
-              value={form.token}
-              placeholder="ghp_… or github_pat_…"
-              onChange={(e) => setForm({ ...form, token: e.target.value })}
-            />
           </label>
           <div className="tk-grid-2">
             <label className="tk-field">
@@ -453,12 +440,9 @@ function GitHubSyncModal({
               <label>
                 <input
                   type="checkbox"
-                  checked={form.include_pull_requests}
+                  checked={form.include_prs}
                   onChange={(e) =>
-                    setForm({
-                      ...form,
-                      include_pull_requests: e.target.checked,
-                    })
+                    setForm({ ...form, include_prs: e.target.checked })
                   }
                 />{" "}
                 Pull requests
@@ -978,10 +962,12 @@ export function TasksView({
   token,
   repos,
   projectId = null,
+  workspaceId = null,
 }: {
   token: string;
   repos: string[];
   projectId?: string | null;
+  workspaceId?: string | null;
 }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -997,6 +983,7 @@ export function TasksView({
   const [toast, setToast] = useState("");
   const [syncOpen, setSyncOpen] = useState(false);
   const [links, setLinks] = useState<GitHubLink[]>([]);
+  const [ghRepos, setGhRepos] = useState<string[]>([]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1202,9 +1189,13 @@ export function TasksView({
             className="button"
             onClick={() => {
               setSyncOpen(true);
-              api<GitHubLink[]>("/github/links", token)
+              api<GitHubLink[]>(withProject("/github/links", projectId), token)
                 .then(setLinks)
                 .catch(() => {});
+              if (workspaceId)
+                api<GitHubRepo[]>(`/workspaces/${workspaceId}/github/repos`, token)
+                  .then((list) => setGhRepos(list.map((r) => r.full_name)))
+                  .catch(() => setGhRepos([]));
             }}
           >
             <Github size={15} /> Import from GitHub
@@ -1391,21 +1382,22 @@ export function TasksView({
       {syncOpen && (
         <GitHubSyncModal
           close={() => setSyncOpen(false)}
-          repos={repoOptions}
+          repos={ghRepos}
           links={links}
           unlink={async (link) => {
             await api("/github/links/" + link.id, token, { method: "DELETE" });
             setLinks((current) => current.filter((l) => l.id !== link.id));
           }}
           sync={async ({ live, ...value }) => {
+            if (!projectId) throw new Error("Select a project first.");
             const result = await api<GitHubSyncResult>("/github/sync", token, {
               method: "POST",
-              body: JSON.stringify(value),
+              body: JSON.stringify({ ...value, project_id: projectId }),
             });
             if (live) {
               await api<GitHubLink>("/github/links", token, {
                 method: "POST",
-                body: JSON.stringify({ repo: value.repo, token: value.token }),
+                body: JSON.stringify({ project_id: projectId, repo: value.repo }),
               });
             }
             setSyncOpen(false);

@@ -18,17 +18,14 @@ from . import auth as auth_utils
 from . import workspaces as ws
 from .db import ApiKey, Base, ContextRequest, GitHubRepoLink, ImpactNote, Note, Question, SessionLocal, Task, TechDebt, Update, User, UserSession, engine, get_db, now_utc
 from .explain import explain_question
-from .github_sync import GitHubSyncError, fetch_items, item_from_webhook, parse_repo, verify_repo_access, verify_signature
+from .github_sync import item_from_webhook, verify_signature
 from .mcp_server import create_mcp_server
 from .schemas import (
     ContextRequestClaim,
     ContextRequestCreate,
     ContextRequestFulfill,
     ContextRequestRead,
-    GitHubLinkCreate,
     GitHubLinkRead,
-    GitHubSyncRequest,
-    GitHubSyncResult,
     ImpactNoteCreate,
     ImpactNoteRead,
     NOTE_CATEGORIES,
@@ -859,39 +856,6 @@ def _upsert_github_task(db: Session, item, owner_id: str | None, repo_url: str, 
     return False
 
 
-@app.post("/api/github/sync", response_model=GitHubSyncResult, dependencies=[Depends(require_token)])
-def sync_github(payload: GitHubSyncRequest, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> GitHubSyncResult:
-    """Import a repository's issues and PRs as tasks. One-way: GitHub is never written to.
-
-    The personal access token is used for this request only and is not stored.
-    """
-    owner_id = _owner_id(db, authorization)
-    project_id = ws.resolve_project(db, owner_id, payload.project_id, f"https://github.com/{payload.repo}")
-    try:
-        owner, repo = parse_repo(payload.repo)
-        items = fetch_items(
-            owner, repo, payload.token.strip(),
-            state=payload.state,
-            include_prs=payload.include_pull_requests,
-            include_issues=payload.include_issues,
-        )
-    except GitHubSyncError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-
-    repo_url = f"https://github.com/{owner}/{repo}"
-    created = updated = 0
-    for item in items:
-        if _upsert_github_task(db, item, owner_id, repo_url, project_id):
-            created += 1
-        else:
-            updated += 1
-    db.commit()
-    for column in TASK_STATUSES:
-        _reindex_task_column(db, column, project_id)
-    db.commit()
-    return GitHubSyncResult(repo=f"{owner}/{repo}", created=created, updated=updated, total=len(items))
-
-
 @app.get("/api/github/links", response_model=list[GitHubLinkRead], dependencies=[Depends(require_token)])
 def list_github_links(
     project_id: str = Query(default="", max_length=80),
@@ -901,30 +865,6 @@ def list_github_links(
     owner_id = _owner_id(db, authorization)
     query = select(GitHubRepoLink).where(ws.project_filter(db, owner_id, GitHubRepoLink, project_id.strip()))
     return list(db.scalars(query.order_by(GitHubRepoLink.created_at.asc())).all())
-
-
-@app.post("/api/github/links", response_model=GitHubLinkRead, status_code=201, dependencies=[Depends(require_token)])
-def create_github_link(payload: GitHubLinkCreate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> GitHubRepoLink:
-    """Turn on live sync for a repo. The token only proves read access and is not stored."""
-    owner_id = _owner_id(db, authorization)
-    project_id = ws.resolve_project(db, owner_id, payload.project_id, f"https://github.com/{payload.repo}")
-    try:
-        owner, repo = parse_repo(payload.repo)
-        verify_repo_access(owner, repo, payload.token.strip())
-    except GitHubSyncError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    name = f"{owner}/{repo}".lower()
-    link = db.scalar(select(GitHubRepoLink).where(
-        GitHubRepoLink.repo == name,
-        GitHubRepoLink.project_id.is_(None) if project_id is None else GitHubRepoLink.project_id == project_id,
-        *([GitHubRepoLink.user_id.is_(None) if owner_id is None else GitHubRepoLink.user_id == owner_id] if project_id is None else []),
-    ))
-    if link is None:
-        link = GitHubRepoLink(user_id=owner_id, project_id=project_id, repo=name)
-        db.add(link)
-        db.commit()
-        db.refresh(link)
-    return link
 
 
 @app.delete("/api/github/links/{link_id}", dependencies=[Depends(require_token)])
@@ -1544,6 +1484,9 @@ app.include_router(workspace_router)
 from .affinebot_routes import router as affinebot_router  # noqa: E402
 
 app.include_router(affinebot_router)
+from .github_routes import router as github_router  # noqa: E402
+
+app.include_router(github_router)
 
 mcp_mount = ProtectedMCPApp()
 app.mount("/", mcp_mount)

@@ -236,8 +236,8 @@ def test_non_members_get_404_on_every_project_scoped_route(env) -> None:
     assert client.post("/api/notes", json={"title": "n", "project_id": pid}, headers=b).status_code == 404
     assert client.post("/api/tech-debt", json=debt_body(project_id=pid), headers=b).status_code == 404
     assert client.post("/api/updates", json=update_body(project_id=pid), headers=b).status_code == 404
-    assert client.post("/api/github/sync", json={"repo": "o/r", "token": "ghp_testtoken123", "project_id": pid}, headers=b).status_code == 404
-    assert client.post("/api/github/links", json={"repo": "o/r", "token": "ghp_testtoken123", "project_id": pid}, headers=b).status_code == 404
+    assert client.post("/api/github/sync", json={"repo": "o/r", "project_id": pid}, headers=b).status_code == 404
+    assert client.post("/api/github/links", json={"repo": "o/r", "project_id": pid}, headers=b).status_code == 404
     assert client.post("/api/tasks/reorder", json={"columns": {"backlog": [task]}, "project_id": pid}, headers=b).status_code == 404
 
     # Foreign ids by row.
@@ -382,37 +382,42 @@ def test_env_token_and_open_preview_still_see_everything(env, monkeypatch) -> No
 
 
 def test_github_links_and_webhook_fan_out_by_project(env, monkeypatch) -> None:
-    from app import github_sync
+    from test_github_items import CID, SECRET, Upstream
+    from app import affinebot_client as ab
 
     client, _ = env
     monkeypatch.setattr(main.settings, "github_webhook_secret", "whsec")
-    rows = [{"number": 1, "title": "Bug", "body": "", "state": "open", "html_url": "https://github.com/o/r/issues/1", "labels": []}]
-    real_client = httpx.Client
-    monkeypatch.setattr(github_sync.httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=rows if "/issues" in str(r.url) else {})), **kw))
+    fake = Upstream()
+    fake.items = [{**fake.items[0], "title": "Bug"}]
+    monkeypatch.setattr(ab, "_transport_override", httpx.MockTransport(fake))
+    ab._cache.clear()
     alpha = _register_account(client, "alpha@example.com")
     beta = _register_account(client, "beta@example.com")
     pa = workspaces_of(client, alpha)[0]["projects"][0]["id"]
     pb = workspaces_of(client, beta)[0]["projects"][0]["id"]
-    body = {"repo": "o/r", "token": "ghp_testtoken123"}
-    la = client.post("/api/github/links", json=body, headers=H(alpha))
+    for key in (alpha, beta):
+        wid = workspaces_of(client, key)[0]["id"]
+        put = client.put(f"/api/workspaces/{wid}/affinebot", headers=H(key),
+                         json={"base_url": "https://bot.example.com", "client_id": CID, "secret": SECRET})
+        assert put.status_code == 200, put.text
+    la = client.post("/api/github/links", json={"repo": "o/r", "project_id": pa}, headers=H(alpha))
     assert la.status_code == 201 and la.json()["project_id"] == pa
-    assert client.post("/api/github/links", json=body, headers=H(alpha)).json()["id"] == la.json()["id"]
-    lb = client.post("/api/github/links", json=body, headers=H(beta))
+    assert client.post("/api/github/links", json={"repo": "o/r", "project_id": pa}, headers=H(alpha)).json()["id"] == la.json()["id"]
+    lb = client.post("/api/github/links", json={"repo": "o/r", "project_id": pb}, headers=H(beta))
     assert lb.json()["id"] != la.json()["id"] and lb.json()["project_id"] == pb
     assert [l["id"] for l in client.get("/api/github/links", headers=H(alpha)).json()] == [la.json()["id"]]
     assert client.delete(f"/api/github/links/{la.json()['id']}", headers=H(beta)).status_code == 404
 
-    sync = client.post("/api/github/sync", json=body, headers=H(alpha))
-    assert sync.json()["created"] == 1
+    sync = client.post("/api/github/sync", json={"repo": "o/r", "project_id": pa}, headers=H(alpha))
+    assert sync.json()["created"] == 0 and sync.json()["updated"] == 1  # the link's initial sync already imported it
     assert len(client.get("/api/tasks", params={"project_id": pa}, headers=H(alpha)).json()) == 1
-    assert client.get("/api/tasks", headers=H(beta)).json() == []
 
     issue = {"number": 7, "title": "Crash", "body": "", "state": "open", "html_url": "https://github.com/o/r/issues/7", "labels": []}
     raw = json.dumps({"action": "opened", "repository": {"full_name": "o/r"}, "issue": issue}).encode()
     sig = "sha256=" + hmac_mod.new(b"whsec", raw, hashlib.sha256).hexdigest()
     hook = client.post("/api/github/webhook", content=raw, headers={"x-github-event": "issues", "x-hub-signature-256": sig, "content-type": "application/json"})
     assert hook.json()["linked"] == 2
-    assert {t["external_id"] for t in client.get("/api/tasks", headers=H(beta)).json()} == {"github:o/r#7"}
+    assert {t["external_id"] for t in client.get("/api/tasks", headers=H(beta)).json()} == {"github:o/r#1", "github:o/r#7"}
     assert {t["external_id"] for t in client.get("/api/tasks", headers=H(alpha)).json()} == {"github:o/r#1", "github:o/r#7"}
 
 

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl, SecretStr
 
 
 class CodeExcerpt(BaseModel):
@@ -185,12 +185,13 @@ class TaskRead(BaseModel):
 
 
 class GitHubSyncRequest(BaseModel):
-    project_id: str | None = Field(default=None, max_length=80)
+    """No token field: GitHub is reached only through the workspace's Affinebot link (extra keys are ignored)."""
+
+    project_id: str = Field(min_length=1, max_length=80)
     repo: str = Field(min_length=3, max_length=300)
-    token: str = Field(min_length=10, max_length=300)
     state: str = Field(default="open", pattern="^(open|closed|all)$")
     include_issues: bool = True
-    include_pull_requests: bool = True
+    include_prs: bool = Field(default=True, validation_alias=AliasChoices("include_prs", "include_pull_requests"))
 
 
 class GitHubSyncResult(BaseModel):
@@ -198,12 +199,43 @@ class GitHubSyncResult(BaseModel):
     created: int
     updated: int
     total: int
+    truncated: bool = False
 
 
 class GitHubLinkCreate(BaseModel):
-    project_id: str | None = Field(default=None, max_length=80)
+    project_id: str = Field(min_length=1, max_length=80)
     repo: str = Field(min_length=3, max_length=300)
-    token: str = Field(min_length=10, max_length=300)
+
+
+class GitHubRepoRead(BaseModel):
+    full_name: str
+    private: bool = False
+    default_branch: str | None = None
+    linked: bool = False
+    project_id: str | None = None
+
+
+class GitHubItemRead(BaseModel):
+    number: int
+    title: str = ""
+    body: str = ""
+    state: str = "open"
+    merged: bool = False
+    draft: bool = False
+    url: str = ""
+    author: str | None = None
+    assignees: list[str] = []
+    labels: list[str] = []
+    comments: int = 0
+    is_pr: bool = False
+    updated_at: str | None = None
+    branch: str | None = None
+    task_id: str | None = None
+
+
+class GitHubItemsPage(BaseModel):
+    items: list[GitHubItemRead]
+    next_page: int | None = None
 
 
 class GitHubLinkRead(BaseModel):
@@ -214,6 +246,11 @@ class GitHubLinkRead(BaseModel):
     repo: str
     created_at: datetime
     last_event_at: datetime | None
+
+
+class GitHubLinkCreated(GitHubLinkRead):
+    sync: GitHubSyncResult | None = None
+    sync_error: str | None = None
 
 
 class TaskReorder(BaseModel):

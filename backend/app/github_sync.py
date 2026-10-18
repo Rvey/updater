@@ -1,14 +1,9 @@
-"""One-way import of GitHub issues and pull requests, authenticated with a personal access token."""
+"""GitHub item model and parsing shared by the Affinebot-sourced sync and the webhook."""
 import hashlib
 import hmac
 import re
 from dataclasses import dataclass, field
 
-import httpx
-
-API_ROOT = "https://api.github.com"
-PAGE_SIZE = 100
-MAX_PAGES = 5
 
 _REPO_RE = re.compile(r"^(?:https?://github\.com/|git@github\.com:|github\.com/)?([\w.-]+)/([\w.-]+?)(?:\.git)?/?$", re.I)
 
@@ -41,63 +36,6 @@ def parse_repo(value: str) -> tuple[str, str]:
     return match.group(1), match.group(2)
 
 
-def fetch_items(owner: str, repo: str, token: str, state: str = "open", include_prs: bool = True, include_issues: bool = True, client: httpx.Client | None = None) -> list[GitHubItem]:
-    headers = {
-        "Authorization": "Bearer " + token,
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "updater-sync",
-    }
-    own_client = client is None
-    http = client or httpx.Client(timeout=20)
-    items: list[GitHubItem] = []
-    try:
-        for page in range(1, MAX_PAGES + 1):
-            try:
-                response = http.get(
-                    f"{API_ROOT}/repos/{owner}/{repo}/issues",
-                    headers=headers,
-                    params={"state": state, "per_page": PAGE_SIZE, "page": page, "sort": "updated"},
-                )
-            except httpx.HTTPError as exc:
-                raise GitHubSyncError("Could not reach GitHub: " + exc.__class__.__name__) from exc
-            if response.status_code == 401:
-                raise GitHubSyncError("GitHub rejected the token", 401)
-            if response.status_code in (403, 429):
-                raise GitHubSyncError("GitHub denied the request (token scope or rate limit)", 403)
-            if response.status_code == 404:
-                raise GitHubSyncError("Repository not found, or the token cannot see it", 404)
-            if response.status_code != 200:
-                raise GitHubSyncError(f"GitHub returned {response.status_code}")
-            rows = response.json()
-            for row in rows:
-                is_pr = "pull_request" in row
-                if (is_pr and not include_prs) or (not is_pr and not include_issues):
-                    continue
-                pr_info = row.get("pull_request") or {}
-                kind = "pr" if is_pr else "issue"
-                items.append(
-                    GitHubItem(
-                        external_id=f"github:{owner}/{repo}#{row['number']}".lower(),
-                        url=row.get("html_url") or "",
-                        title=row.get("title") or f"{kind} #{row['number']}",
-                        body=row.get("body") or "",
-                        is_pr=is_pr,
-                        state=row.get("state") or "open",
-                        merged=bool(pr_info.get("merged_at")),
-                        draft=bool(row.get("draft")),
-                        labels=[(label.get("name") if isinstance(label, dict) else str(label)) for label in row.get("labels", [])],
-                        assignee=(row.get("assignee") or {}).get("login"),
-                    )
-                )
-            if len(rows) < PAGE_SIZE:
-                break
-    finally:
-        if own_client:
-            http.close()
-    return items
-
-
 def verify_signature(secret: str, body: bytes, header: str | None) -> bool:
     if not secret or not header or not header.startswith("sha256="):
         return False
@@ -105,25 +43,32 @@ def verify_signature(secret: str, body: bytes, header: str | None) -> bool:
     return hmac.compare_digest(expected, header)
 
 
-def verify_repo_access(owner: str, repo: str, token: str, client: httpx.Client | None = None) -> None:
-    """Prove the token holder can read the repo, so one account cannot claim another's private repo."""
-    http = client or httpx.Client(timeout=20)
-    try:
-        response = http.get(
-            f"{API_ROOT}/repos/{owner}/{repo}",
-            headers={"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json", "User-Agent": "updater-sync"},
+def items_from_affinebot(repo: str, raw: list[dict]) -> list[GitHubItem]:
+    """Map Affinebot /link/v1 item rows (shared contract v1) to GitHubItem. ``repo`` is owner/name."""
+    full_name = repo.lower()
+    items: list[GitHubItem] = []
+    for row in raw:
+        number = row.get("number")
+        if not isinstance(number, int):
+            continue
+        is_pr = bool(row.get("is_pr"))
+        assignees = row.get("assignees") or []
+        items.append(
+            GitHubItem(
+                external_id=f"github:{full_name}#{number}",
+                url=row.get("url") or "",
+                title=row.get("title") or f"{'pr' if is_pr else 'issue'} #{number}",
+                body=row.get("body") or "",
+                is_pr=is_pr,
+                state="closed" if row.get("state") == "closed" else "open",
+                merged=bool(row.get("merged")),
+                draft=bool(row.get("draft")),
+                labels=[str(label) for label in (row.get("labels") or [])],
+                assignee=assignees[0] if assignees else None,
+                branch=row.get("branch"),
+            )
         )
-    except httpx.HTTPError as exc:
-        raise GitHubSyncError("Could not reach GitHub: " + exc.__class__.__name__) from exc
-    finally:
-        if client is None:
-            http.close()
-    if response.status_code == 401:
-        raise GitHubSyncError("GitHub rejected the token", 401)
-    if response.status_code in (403, 404):
-        raise GitHubSyncError("Repository not found, or the token cannot see it", 404)
-    if response.status_code != 200:
-        raise GitHubSyncError(f"GitHub returned {response.status_code}")
+    return items
 
 
 def item_from_webhook(event: str, payload: dict) -> tuple[str, GitHubItem] | None:
