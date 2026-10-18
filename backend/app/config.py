@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     openrouter_api_key: str = ""
     allow_open_registration: bool = True
+    github_webhook_secret: str = ""
     llm_model: str = "google/gemini-3.5-flash-lite"
 
 

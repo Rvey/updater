@@ -171,9 +171,25 @@ export type Task = {
   assignee: string | null;
   due_date: string | null;
   author_agent: string | null;
+  external_id?: string | null;
+  external_url?: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+};
+
+export type GitHubSyncResult = {
+  repo: string;
+  created: number;
+  updated: number;
+  total: number;
+};
+
+export type GitHubLink = {
+  id: string;
+  repo: string;
+  created_at: string;
+  last_event_at: string | null;
 };
 
 export type NewTask = Pick<Task, "title"> & {

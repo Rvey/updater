@@ -1,3 +1,4 @@
+import { repositoryKey, uniqueRepositories } from "./lib/repositories";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   CalendarClock,
@@ -17,6 +18,8 @@ import {
   X,
 } from "lucide-react";
 import type {
+  GitHubLink,
+  GitHubSyncResult,
   NewTask,
   Task,
   TaskPriority,
@@ -343,6 +346,196 @@ function TaskColumn({
         )}
       </KanbanColumnContent>
     </KanbanColumn>
+  );
+}
+
+function GitHubSyncModal({
+  close,
+  repos,
+  sync,
+  links,
+  unlink,
+}: {
+  close: () => void;
+  repos: string[];
+  sync: (value: {
+    repo: string;
+    token: string;
+    state: string;
+    include_issues: boolean;
+    include_pull_requests: boolean;
+    live: boolean;
+  }) => Promise<void>;
+  links: GitHubLink[];
+  unlink: (link: GitHubLink) => Promise<void>;
+}) {
+  const [form, setForm] = useState({
+    repo: repos.find((r) => /github\.com/i.test(r)) ?? "",
+    token: "",
+    state: "open",
+    include_issues: true,
+    include_pull_requests: true,
+    live: true,
+  });
+  const webhookUrl =
+    (apiBase || window.location.origin) + "/api/github/webhook";
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!form.include_issues && !form.include_pull_requests) {
+      setError("Pick issues, pull requests, or both.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await sync({ ...form, repo: form.repo.trim(), token: form.token.trim() });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sync failed");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="tk-modal-backdrop" onMouseDown={close}>
+      <div
+        className="tk-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Import from GitHub"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="tk-modal-head">
+          <div>
+            <div className="tk-eyebrow">GITHUB IMPORT</div>
+            <h3>Import issues and pull requests</h3>
+          </div>
+          <button
+            type="button"
+            className="tk-icon-btn"
+            onClick={close}
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <form className="tk-form" onSubmit={submit}>
+          <label className="tk-field">
+            <span>Repository</span>
+            <input
+              required
+              list="tk-gh-repos"
+              value={form.repo}
+              placeholder="owner/name or https://github.com/owner/name"
+              onChange={(e) => setForm({ ...form, repo: e.target.value })}
+            />
+            <datalist id="tk-gh-repos">
+              {repos.map((repo) => (
+                <option key={repo} value={repo} />
+              ))}
+            </datalist>
+          </label>
+          <label className="tk-field">
+            <span>
+              Personal access token <em>used once, never stored</em>
+            </span>
+            <input
+              required
+              type="password"
+              autoComplete="off"
+              value={form.token}
+              placeholder="ghp_… or github_pat_…"
+              onChange={(e) => setForm({ ...form, token: e.target.value })}
+            />
+          </label>
+          <div className="tk-grid-2">
+            <label className="tk-field">
+              <span>State</span>
+              <select
+                value={form.state}
+                onChange={(e) => setForm({ ...form, state: e.target.value })}
+              >
+                <option value="open">Open</option>
+                <option value="closed">Closed</option>
+                <option value="all">All</option>
+              </select>
+            </label>
+            <div className="tk-field">
+              <span>Include</span>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={form.include_issues}
+                  onChange={(e) =>
+                    setForm({ ...form, include_issues: e.target.checked })
+                  }
+                />{" "}
+                Issues
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={form.include_pull_requests}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      include_pull_requests: e.target.checked,
+                    })
+                  }
+                />{" "}
+                Pull requests
+              </label>
+            </div>
+          </div>
+          <label>
+            <input
+              type="checkbox"
+              checked={form.live}
+              onChange={(e) => setForm({ ...form, live: e.target.checked })}
+            />{" "}
+            Keep synced live (GitHub pushes changes via webhook)
+          </label>
+          {form.live && (
+            <p className="tk-hint">
+              In your GitHub App (or the repo's Settings → Webhooks) set the
+              payload URL to <code>{webhookUrl}</code>, content type JSON, the
+              same secret as <code>GITHUB_WEBHOOK_SECRET</code>, and subscribe to
+              Issues and Pull requests.
+            </p>
+          )}
+          {links.length > 0 && (
+            <ul className="tk-hint">
+              {links.map((link) => (
+                <li key={link.id}>
+                  Live: {link.repo}
+                  {link.last_event_at
+                    ? " · last event " + dateLabel(link.last_event_at)
+                    : " · waiting for first event"}{" "}
+                  <button
+                    type="button"
+                    className="tk-btn"
+                    onClick={() => unlink(link)}
+                  >
+                    Stop
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {error && <div className="tk-form-error">{error}</div>}
+          <div className="tk-form-foot">
+            <button type="button" className="tk-btn" onClick={close}>
+              Cancel
+            </button>
+            <Button type="submit" className="button primary" disabled={busy}>
+              {busy ? "Importing…" : form.live ? "Import & sync live" : "Import"}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -824,6 +1017,8 @@ export function TasksView({
   const [busy, setBusy] = useState("");
   const [savingBoard, setSavingBoard] = useState(false);
   const [toast, setToast] = useState("");
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [links, setLinks] = useState<GitHubLink[]>([]);
 
   useEffect(() => {
     if (!toast) return;
@@ -851,21 +1046,17 @@ export function TasksView({
 
   const repoOptions = useMemo(
     () =>
-      Array.from(
-        new Set([
-          ...repos,
-          ...tasks
-            .map((task) => task.repo_url)
-            .filter((url): url is string => Boolean(url)),
-        ]),
-      ),
+      uniqueRepositories([
+        ...repos,
+        ...tasks.map((task) => task.repo_url).filter((url): url is string => Boolean(url)),
+      ]),
     [repos, tasks],
   );
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
     return tasks.filter((task) => {
-      if (repoFilter !== "all" && task.repo_url !== repoFilter) return false;
+      if (repoFilter !== "all" && repositoryKey(task.repo_url) !== repositoryKey(repoFilter)) return false;
       if (priorityFilter !== "all" && task.priority !== priorityFilter)
         return false;
       if (!q) return true;
@@ -1029,6 +1220,17 @@ export function TasksView({
           )}
         </div>
         <div className="tk-head-actions">
+          <Button
+            className="button"
+            onClick={() => {
+              setSyncOpen(true);
+              api<GitHubLink[]>("/github/links", token)
+                .then(setLinks)
+                .catch(() => {});
+            }}
+          >
+            <Github size={15} /> Import from GitHub
+          </Button>
           <Button
             className="button primary"
             onClick={() => setModal({ mode: "create", status: "backlog" })}
@@ -1205,6 +1407,35 @@ export function TasksView({
           save={(value) =>
             modal.mode === "edit" ? update(modal.task, value) : create(value)
           }
+        />
+      )}
+
+      {syncOpen && (
+        <GitHubSyncModal
+          close={() => setSyncOpen(false)}
+          repos={repoOptions}
+          links={links}
+          unlink={async (link) => {
+            await api("/github/links/" + link.id, token, { method: "DELETE" });
+            setLinks((current) => current.filter((l) => l.id !== link.id));
+          }}
+          sync={async ({ live, ...value }) => {
+            const result = await api<GitHubSyncResult>("/github/sync", token, {
+              method: "POST",
+              body: JSON.stringify(value),
+            });
+            if (live) {
+              await api<GitHubLink>("/github/links", token, {
+                method: "POST",
+                body: JSON.stringify({ repo: value.repo, token: value.token }),
+              });
+            }
+            setSyncOpen(false);
+            setToast(
+              `Imported ${result.created} new, refreshed ${result.updated} from ${result.repo}`,
+            );
+            await load(true);
+          }}
         />
       )}
 

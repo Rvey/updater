@@ -1,3 +1,4 @@
+import { repositoryKey, uniqueRepositories } from "./lib/repositories";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
@@ -809,7 +810,7 @@ export function NotesView({ token, repos }: { token: string; repos: string[] }) 
       try { short = new URL(r).pathname.replace(/\.git$/, "").replace(/^\//, "") || r; } catch { short = r; }
       if (!set.has(r) && !set.has(short)) set.set(r, 0);
     });
-    return Array.from(set.keys()).sort();
+    return uniqueRepositories(Array.from(set.keys())).sort();
   }, [notes, repos]);
 
   const openCount = notes.filter((n) => !n.archived && n.status !== "archived" && (n.status === "open" || n.status === "in-progress")).length;
@@ -826,7 +827,7 @@ export function NotesView({ token, repos }: { token: string; repos: string[] }) 
       else if (status !== "all" && n.status !== status) return false;
       if (tagFilter !== "all" && (n.tags || []).indexOf(tagFilter) === -1) return false;
       if (repoFilter === "none") { if (n.repository) return false; }
-      else if (repoFilter !== "all" && n.repository !== repoFilter) return false;
+      else if (repoFilter !== "all" && repositoryKey(n.repository) !== repositoryKey(repoFilter)) return false;
       const df: string | null = dateField === "created_at" ? n.created_at : dateField === "due_date" ? n.due_date : n.updated_at;
       if (!dateInPreset(df, datePreset, customFrom, customTo)) return false;
       if (q) {
@@ -872,7 +873,7 @@ export function NotesView({ token, repos }: { token: string; repos: string[] }) 
       return buckets.filter((b) => (map.get(b) || []).length).map((b) => ({ key: b, label: b, items: map.get(b)! }));
     }
     filtered.forEach((n) => {
-      const k = groupBy === "category" ? CATEGORY_LABEL[n.category] : groupBy === "status" ? STATUS_LABEL[n.status] : (n.repository || "Personal");
+      const k = groupBy === "category" ? CATEGORY_LABEL[n.category] : groupBy === "status" ? STATUS_LABEL[n.status] : (repositoryKey(n.repository) || "Personal");
       if (!map.has(k)) map.set(k, []);
       map.get(k)!.push(n);
     });

@@ -1,7 +1,9 @@
 import hmac
+import json
+import re
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
@@ -13,14 +15,19 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from .config import get_settings
 from . import auth as auth_utils
-from .db import ApiKey, Base, ContextRequest, ImpactNote, Note, Question, SessionLocal, Task, TechDebt, Update, User, UserSession, engine, get_db, now_utc
+from .db import ApiKey, Base, ContextRequest, GitHubRepoLink, ImpactNote, Note, Question, SessionLocal, Task, TechDebt, Update, User, UserSession, engine, get_db, now_utc
 from .explain import explain_question
+from .github_sync import GitHubSyncError, fetch_items, item_from_webhook, parse_repo, verify_repo_access, verify_signature
 from .mcp_server import create_mcp_server
 from .schemas import (
     ContextRequestClaim,
     ContextRequestCreate,
     ContextRequestFulfill,
     ContextRequestRead,
+    GitHubLinkCreate,
+    GitHubLinkRead,
+    GitHubSyncRequest,
+    GitHubSyncResult,
     ImpactNoteCreate,
     ImpactNoteRead,
     NOTE_CATEGORIES,
@@ -120,6 +127,10 @@ def _ensure_ownership_columns() -> None:
             connection.execute(text("ALTER TABLE notes ADD COLUMN user_id VARCHAR(36)"))
         if "user_id" not in task_cols:
             connection.execute(text("ALTER TABLE tasks ADD COLUMN user_id VARCHAR(36)"))
+        if "external_id" not in task_cols:
+            connection.execute(text("ALTER TABLE tasks ADD COLUMN external_id VARCHAR(255)"))
+        if "external_url" not in task_cols:
+            connection.execute(text("ALTER TABLE tasks ADD COLUMN external_url VARCHAR(600)"))
         if "user_id" not in debt_cols:
             connection.execute(text("ALTER TABLE tech_debt ADD COLUMN user_id VARCHAR(36)"))
         if "source_repo_url" not in ctx_cols:
@@ -240,6 +251,8 @@ def _normalize_repo_url(value):
     if cleaned.startswith('git@') and ':' in cleaned:
         host, _, path = cleaned[4:].partition(':')
         cleaned = 'https://' + host + '/' + path
+    cleaned = re.sub(r"^ssh://(?:git@)?", "https://", cleaned)
+    cleaned = re.sub(r"^http://", "https://", cleaned)
     return cleaned.lower()
 
 
@@ -765,6 +778,157 @@ def update_task(task_id: str, payload: TaskUpdate, db: Session = Depends(get_db)
     db.commit()
     db.refresh(entry)
     return entry
+
+
+def _github_task_status(item) -> str:
+    if item.state == "closed":
+        return "done"
+    return "review" if item.is_pr and not item.draft else "backlog"
+
+
+def _upsert_github_task(db: Session, item, owner_id: str | None, repo_url: str) -> bool:
+    """Create or refresh the task for one GitHub item. Returns True when created."""
+    kind = "pull-request" if item.is_pr else "issue"
+    tags = _normalize_task_tags(["github", kind, *item.labels])
+    title = item.title.strip()[:180]
+    description = (item.body or "").strip()[:7900]
+    remote_done = item.state == "closed"
+    entry = db.scalar(
+        select(Task).where(Task.external_id == item.external_id, Task.user_id.is_(None) if owner_id is None else Task.user_id == owner_id)
+    )
+    if entry is None:
+        status_value = _github_task_status(item)
+        position = db.scalar(
+            select(func.count()).select_from(Task).where(Task.status == status_value, _ownership_clause(Task, owner_id))
+        ) or 0
+        db.add(Task(
+            user_id=owner_id, title=title, description=description, status=status_value,
+            position=int(position), repo_url=repo_url, tags=tags, assignee=item.assignee,
+            external_id=item.external_id, external_url=item.url,
+            completed_at=now_utc() if remote_done else None,
+        ))
+        db.flush()
+        return True
+    entry.title, entry.description, entry.tags = title, description, tags
+    entry.assignee, entry.external_url, entry.repo_url = item.assignee, item.url, repo_url
+    # Only a change of GitHub state moves the card; local column choices otherwise stay.
+    if remote_done and entry.status != "done":
+        entry.status, entry.completed_at = "done", now_utc()
+    elif not remote_done and entry.status == "done":
+        entry.status, entry.completed_at = _github_task_status(item), None
+    db.flush()
+    return False
+
+
+@app.post("/api/github/sync", response_model=GitHubSyncResult, dependencies=[Depends(require_token)])
+def sync_github(payload: GitHubSyncRequest, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> GitHubSyncResult:
+    """Import a repository's issues and PRs as tasks. One-way: GitHub is never written to.
+
+    The personal access token is used for this request only and is not stored.
+    """
+    owner_id = _owner_id(db, authorization)
+    try:
+        owner, repo = parse_repo(payload.repo)
+        items = fetch_items(
+            owner, repo, payload.token.strip(),
+            state=payload.state,
+            include_prs=payload.include_pull_requests,
+            include_issues=payload.include_issues,
+        )
+    except GitHubSyncError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    repo_url = f"https://github.com/{owner}/{repo}"
+    created = updated = 0
+    for item in items:
+        if _upsert_github_task(db, item, owner_id, repo_url):
+            created += 1
+        else:
+            updated += 1
+    db.commit()
+    for column in TASK_STATUSES:
+        _reindex_task_column(db, column, owner_id)
+    db.commit()
+    return GitHubSyncResult(repo=f"{owner}/{repo}", created=created, updated=updated, total=len(items))
+
+
+@app.get("/api/github/links", response_model=list[GitHubLinkRead], dependencies=[Depends(require_token)])
+def list_github_links(db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> list[GitHubRepoLink]:
+    owner_id = _owner_id(db, authorization)
+    query = select(GitHubRepoLink).where(GitHubRepoLink.user_id.is_(None) if owner_id is None else GitHubRepoLink.user_id == owner_id)
+    return list(db.scalars(query.order_by(GitHubRepoLink.created_at.asc())).all())
+
+
+@app.post("/api/github/links", response_model=GitHubLinkRead, status_code=201, dependencies=[Depends(require_token)])
+def create_github_link(payload: GitHubLinkCreate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> GitHubRepoLink:
+    """Turn on live sync for a repo. The token only proves read access and is not stored."""
+    owner_id = _owner_id(db, authorization)
+    try:
+        owner, repo = parse_repo(payload.repo)
+        verify_repo_access(owner, repo, payload.token.strip())
+    except GitHubSyncError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    name = f"{owner}/{repo}".lower()
+    link = db.scalar(select(GitHubRepoLink).where(
+        GitHubRepoLink.repo == name,
+        GitHubRepoLink.user_id.is_(None) if owner_id is None else GitHubRepoLink.user_id == owner_id,
+    ))
+    if link is None:
+        link = GitHubRepoLink(user_id=owner_id, repo=name)
+        db.add(link)
+        db.commit()
+        db.refresh(link)
+    return link
+
+
+@app.delete("/api/github/links/{link_id}", dependencies=[Depends(require_token)])
+def delete_github_link(link_id: str, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    owner_id = _owner_id(db, authorization)
+    link = db.get(GitHubRepoLink, link_id)
+    if not link or (owner_id is not None and link.user_id != owner_id):
+        raise HTTPException(status_code=404, detail="Link not found")
+    db.delete(link)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/github/webhook", include_in_schema=False)
+async def github_webhook(request: Request, db: Session = Depends(get_db)) -> dict[str, object]:
+    """Receive issue and pull request events from a GitHub App or repository webhook."""
+    body = await request.body()
+    if not settings.github_webhook_secret:
+        raise HTTPException(status_code=503, detail="GITHUB_WEBHOOK_SECRET is not configured")
+    if not verify_signature(settings.github_webhook_secret, body, request.headers.get("x-hub-signature-256")):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+    event = request.headers.get("x-github-event", "")
+    if event == "ping":
+        return {"ok": True, "pong": True}
+    try:
+        payload = json.loads(body)
+        parsed = item_from_webhook(event, payload)
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(status_code=400, detail="Malformed payload")
+    if parsed is None:
+        return {"ok": True, "ignored": event}
+    repo_name, item = parsed
+    links = list(db.scalars(select(GitHubRepoLink).where(GitHubRepoLink.repo == repo_name)).all())
+    removed = payload.get("action") in ("deleted", "transferred")
+    for link in links:
+        if removed:
+            for task in db.scalars(select(Task).where(
+                Task.external_id == item.external_id,
+                Task.user_id.is_(None) if link.user_id is None else Task.user_id == link.user_id,
+            )).all():
+                db.delete(task)
+        else:
+            _upsert_github_task(db, item, link.user_id, f"https://github.com/{repo_name}")
+        link.last_event_at = now_utc()
+    db.commit()
+    for link in links:
+        for column in TASK_STATUSES:
+            _reindex_task_column(db, column, link.user_id)
+    db.commit()
+    return {"ok": True, "linked": len(links)}
 
 
 @app.post("/api/tasks/reorder", response_model=list[TaskRead], dependencies=[Depends(require_token)])

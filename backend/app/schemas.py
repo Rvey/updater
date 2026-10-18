@@ -170,9 +170,40 @@ class TaskRead(BaseModel):
     assignee: str | None
     due_date: datetime | None
     author_agent: str | None
+    external_id: str | None = None
+    external_url: str | None = None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
+
+
+class GitHubSyncRequest(BaseModel):
+    repo: str = Field(min_length=3, max_length=300)
+    token: str = Field(min_length=10, max_length=300)
+    state: str = Field(default="open", pattern="^(open|closed|all)$")
+    include_issues: bool = True
+    include_pull_requests: bool = True
+
+
+class GitHubSyncResult(BaseModel):
+    repo: str
+    created: int
+    updated: int
+    total: int
+
+
+class GitHubLinkCreate(BaseModel):
+    repo: str = Field(min_length=3, max_length=300)
+    token: str = Field(min_length=10, max_length=300)
+
+
+class GitHubLinkRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    repo: str
+    created_at: datetime
+    last_event_at: datetime | None
 
 
 class TaskReorder(BaseModel):

@@ -1,3 +1,4 @@
+import { repositoryKey, uniqueRepositories } from "./lib/repositories";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
@@ -353,7 +354,7 @@ export function TechDebtView({ token, repos }: { token: string; repos: string[] 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
     return items.filter((i) => {
-      if (repo !== "All repos" && i.repo_url !== repo) return false;
+      if (repo !== "All repos" && repositoryKey(i.repo_url) !== repositoryKey(repo)) return false;
       if (urgency !== "all" && i.urgency !== urgency) return false;
       if (status === "open-all") {
         if (i.status === "resolved" || i.status === "wont-fix") return false;
@@ -391,7 +392,7 @@ export function TechDebtView({ token, repos }: { token: string; repos: string[] 
     });
   };
 
-  const repoOptions = ["All repos", ...Array.from(new Set([...repos, ...items.map((i) => i.repo_url)]))];
+  const repoOptions = ["All repos", ...uniqueRepositories([...repos, ...items.map((i) => i.repo_url)])];
 
   return (
     <div className="td-wrap">

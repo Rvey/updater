@@ -2,7 +2,7 @@ from collections.abc import Generator
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, create_engine
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, UniqueConstraint, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 from .config import get_settings
@@ -106,9 +106,24 @@ class Task(Base):
     assignee: Mapped[str | None] = mapped_column(String(120), nullable=True, default=None)
     due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     author_agent: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+    external_id: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None, index=True)
+    external_url: Mapped[str | None] = mapped_column(String(600), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+
+
+class GitHubRepoLink(Base):
+    """A repository whose webhook events are mirrored into one account's tasks."""
+
+    __tablename__ = "github_repo_links"
+    __table_args__ = (UniqueConstraint("user_id", "repo"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True, default=None)
+    repo: Mapped[str] = mapped_column(String(300), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
 
 
 class ContextRequest(Base):

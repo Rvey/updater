@@ -1,3 +1,4 @@
+import { repositoryKey, uniqueRepositories } from "./lib/repositories";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Activity,
@@ -1137,13 +1138,13 @@ function WorkspaceApp() {
   }, [token, view, settingsSection]);
 
   const repositories = useMemo(
-    () => [...new Set(updates.map((item) => item.repo_url))],
+    () => uniqueRepositories(updates.map((item) => item.repo_url)),
     [updates],
   );
   const filtered = useMemo(
     () =>
       updates.filter((item) => {
-        const matchesRepo = repo === "All updates" || item.repo_url === repo;
+        const matchesRepo = repo === "All updates" || repositoryKey(item.repo_url) === repositoryKey(repo);
         const matchesSearch = updateSearchText(item).includes(search.toLowerCase().trim());
         const matchesView = view === "updates" || item.questions.length > 0;
         return matchesRepo && matchesSearch && matchesView;

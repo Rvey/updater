@@ -2,6 +2,8 @@ from collections.abc import Generator
 from datetime import datetime, timezone
 import json
 
+import httpx
+
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -740,3 +742,123 @@ def test_backfill_adopts_unowned_rows_and_undo_is_precise(tmp_path, monkeypatch)
         unowned = {u.title for u in db.scalars(select(Update).where(Update.user_id.is_(None))).all()}
         assert unowned == {"Legacy A", "Legacy B", "Legacy other"}, unowned
     test_engine.dispose()
+
+
+def test_repository_filter_combines_remote_spellings_and_agents(tmp_path) -> None:
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'repos.sqlite3'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(test_engine)
+    client = _signed_in_client(test_engine)
+    try:
+        with client:
+            key = _register_account(client, "repo-owner@example.com")
+            headers = {"Authorization": f"Bearer {key}"}
+            for agent, repo in [("codex", "https://github.com/example/repo"), ("claude", "https://github.com/example/repo.git/")]:
+                result = client.post("/api/tasks", headers=headers, json={"title": f"Task from {agent}", "repo_url": repo, "author_agent": agent})
+                assert result.status_code == 201, result.text
+            for remote in ["https://github.com/example/repo", "git@github.com:example/repo.git", "ssh://git@github.com/example/repo.git", "http://github.com/example/repo/"]:
+                response = client.get("/api/tasks", headers=headers, params={"repo": remote})
+                assert response.status_code == 200, response.text
+                assert len(response.json()) == 2
+            assert client.get("/api/tasks", headers=headers, params={"repo": "https://github.com/other/repo"}).json() == []
+    finally:
+        main.app.dependency_overrides.clear()
+        test_engine.dispose()
+
+
+def test_github_sync_imports_and_updates_tasks(tmp_path, monkeypatch) -> None:
+    from app import github_sync
+
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'gh.sqlite3'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(test_engine)
+    session_factory = sessionmaker(bind=test_engine)
+
+    def test_db() -> Generator[Session, None, None]:
+        with session_factory() as session:
+            yield session
+
+    rows = [
+        {"number": 1, "title": "Bug", "body": "broken", "state": "open", "html_url": "https://github.com/o/r/issues/1",
+         "labels": [{"name": "Bug"}], "assignee": {"login": "rvey"}},
+        {"number": 2, "title": "Add feature", "body": "", "state": "open", "html_url": "https://github.com/o/r/pull/2",
+         "labels": [], "pull_request": {}},
+    ]
+
+    def handler(request):
+        assert request.headers["authorization"] == "Bearer ghp_testtoken123"
+        return httpx.Response(200, json=rows)
+
+    real_client = httpx.Client
+    monkeypatch.setattr(github_sync.httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    main.app.dependency_overrides[main.get_db] = test_db
+    body = {"repo": "https://github.com/o/r", "token": "ghp_testtoken123"}
+    try:
+        with TestClient(main.app) as client:
+            first = client.post("/api/github/sync", json=body)
+            assert first.status_code == 200, first.text
+            assert first.json() == {"repo": "o/r", "created": 2, "updated": 0, "total": 2}
+            rows[0]["state"] = "closed"
+            rows[0]["title"] = "Bug (fixed)"
+            second = client.post("/api/github/sync", json=body)
+            assert second.json()["created"] == 0 and second.json()["updated"] == 2
+            tasks = {t["external_id"]: t for t in client.get("/api/tasks").json()}
+            assert len(tasks) == 2
+            bug = tasks["github:o/r#1"]
+            assert bug["status"] == "done" and bug["title"] == "Bug (fixed)"
+            assert bug["assignee"] == "rvey" and "bug" in bug["tags"]
+            assert tasks["github:o/r#2"]["status"] == "review"
+            bad = client.post("/api/github/sync", json={"repo": "not a repo", "token": "ghp_testtoken123"})
+            assert bad.status_code == 422
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+def test_github_webhook_live_sync(tmp_path, monkeypatch) -> None:
+    import hashlib
+    import hmac as hmac_mod
+
+    from app import github_sync
+
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'hook.sqlite3'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(test_engine)
+    session_factory = sessionmaker(bind=test_engine)
+
+    def test_db() -> Generator[Session, None, None]:
+        with session_factory() as session:
+            yield session
+
+    real_client = httpx.Client
+    monkeypatch.setattr(github_sync.httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})), **kw))
+    monkeypatch.setattr(main.settings, "github_webhook_secret", "whsec")
+    main.app.dependency_overrides[main.get_db] = test_db
+
+    def post(client, event, payload, secret="whsec"):
+        raw = json.dumps(payload).encode()
+        sig = "sha256=" + hmac_mod.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+        return client.post("/api/github/webhook", content=raw, headers={"x-github-event": event, "x-hub-signature-256": sig, "content-type": "application/json"})
+
+    issue = {"number": 7, "title": "Crash", "body": "", "state": "open", "html_url": "https://github.com/o/r/issues/7", "labels": []}
+    base = {"action": "opened", "repository": {"full_name": "O/R"}, "issue": issue}
+    try:
+        with TestClient(main.app) as client:
+            assert post(client, "issues", base).json()["linked"] == 0
+            link = client.post("/api/github/links", json={"repo": "o/r", "token": "ghp_testtoken123"})
+            assert link.status_code == 201, link.text
+            assert client.post("/api/github/links", json={"repo": "o/r", "token": "ghp_testtoken123"}).json()["id"] == link.json()["id"]
+            assert post(client, "issues", base).json()["linked"] == 1
+            tasks = client.get("/api/tasks").json()
+            assert [t["external_id"] for t in tasks] == ["github:o/r#7"]
+            issue["state"] = "closed"
+            post(client, "issues", {**base, "action": "closed"})
+            assert client.get("/api/tasks").json()[0]["status"] == "done"
+            pr = {"number": 8, "title": "Fix", "state": "open", "draft": False, "html_url": "x", "labels": []}
+            post(client, "pull_request", {"action": "opened", "repository": {"full_name": "o/r"}, "pull_request": pr})
+            assert {t["status"] for t in client.get("/api/tasks").json()} == {"done", "review"}
+            post(client, "issues", {**base, "action": "deleted"})
+            assert [t["external_id"] for t in client.get("/api/tasks").json()] == ["github:o/r#8"]
+            assert post(client, "issues", base, secret="wrong").status_code == 401
+            assert post(client, "ping", {"zen": "x"}).json()["pong"] is True
+            assert client.get("/api/github/links").json()[0]["last_event_at"] is not None
+            assert client.delete(f"/api/github/links/{link.json()['id']}").status_code == 200
+            assert client.get("/api/github/links").json() == []
+    finally:
+        main.app.dependency_overrides.clear()
