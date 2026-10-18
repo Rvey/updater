@@ -14,7 +14,7 @@
 .gh-kind.draft { color: var(--tk-muted); }
 .gh-main { flex: 1; min-width: 0; display: grid; gap: 5px; }
 .gh-title { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-weight: 700; font-size: 14px; }
-.gh-title a { color: var(--tk-text); text-decoration: none; }
+.gh-title a { color: var(--tk-text); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
 .gh-title a:hover { text-decoration: underline; }
 .gh-state { font-size: 10.5px; font-weight: 700; border-radius: 20px; padding: 1px 8px; border: 1px solid currentColor; }
 .gh-state.open { color: var(--tk-green); }

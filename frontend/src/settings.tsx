@@ -880,12 +880,12 @@ function AffinebotCard({ token, workspace }: { token: string; workspace: Workspa
                   {busy ? "Working…" : link ? "Update link" : "Connect"}
                 </Button>
                 {link && (
-                  <Button type="button" className="button" disabled={busy} onClick={check}>
+                  <Button type="button" className="button" variant="outline" disabled={busy} onClick={check}>
                     <RefreshCw size={14} /> Check connection
                   </Button>
                 )}
                 {link && (
-                  <Button type="button" className="button" disabled={busy} onClick={disconnect}>
+                  <Button type="button" className="button" variant="destructive" disabled={busy} onClick={disconnect}>
                     Disconnect
                   </Button>
                 )}

@@ -94,6 +94,9 @@
 .tk-head-actions {
   padding-top: 28px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .spin {
   animation: tk-spin 0.9s linear infinite;

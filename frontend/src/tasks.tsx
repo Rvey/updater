@@ -1,6 +1,6 @@
 import { apiBase, request as api, withProject } from "./lib/api";
 import { repositoryKey, uniqueRepositories } from "./lib/repositories";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState, useRef } from "react";
 import {
   CalendarClock,
   Check,
@@ -29,7 +29,7 @@ import type {
   TaskUpdate,
 } from "./types";
 import { Button } from "./components/ui/button";
-import { CardDelegationBadge, DelegateControl, canDelegateTask, useLatestDelegation } from "./delegation";
+import { CardDelegationBadge, DelegateControl, canDelegateTask, onPrOpened, useLatestDelegation } from "./delegation";
 import {
   Kanban,
   KanbanBoard,
@@ -728,17 +728,15 @@ function TaskModal({
 function DelegationSection({
   token,
   taskId,
-  onPrOpened,
 }: {
   token: string;
   taskId: string;
-  onPrOpened: () => void;
 }) {
   const d = useLatestDelegation(token, taskId, true);
   return (
     <section className="tk-section">
       <h3>Claude Code</h3>
-      <DelegateControl token={token} taskId={taskId} onPrOpened={onPrOpened} />
+      <DelegateControl token={token} taskId={taskId} />
       {d?.status === "failed" && d.error && <p className="dg-fail">{d.error}</p>}
       {d?.status === "pr_opened" && d.summary && <p className="dg-summary">{d.summary}</p>}
     </section>
@@ -748,7 +746,6 @@ function DelegationSection({
 function TaskDetail({
   task,
   token,
-  onPrOpened,
   busy,
   onMove,
   onEdit,
@@ -757,7 +754,6 @@ function TaskDetail({
 }: {
   task: Task;
   token: string;
-  onPrOpened: () => void;
   busy: string;
   onMove: (status: TaskStatus) => void;
   onEdit: () => void;
@@ -835,7 +831,7 @@ function TaskDetail({
         </div>
 
         {canDelegateTask(task) && (
-          <DelegationSection token={token} taskId={task.id} onPrOpened={onPrOpened} />
+          <DelegationSection token={token} taskId={task.id} />
         )}
 
         <section className="tk-section">
@@ -1037,6 +1033,11 @@ export function TasksView({
       /* ignore; next full load will catch up */
     }
   };
+
+  const refreshRef = useRef(refreshTask);
+  refreshRef.current = refreshTask;
+  // A delegation that opened a PR moved its task to review on the server; mirror it on the board.
+  useEffect(() => onPrOpened((id) => void refreshRef.current(id)), []);
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -1408,7 +1409,6 @@ export function TasksView({
           key={selected.id}
           task={selected}
           token={token}
-          onPrOpened={() => refreshTask(selected.id)}
           busy={busy}
           onMove={(status) => changeStatus(selected, status)}
           onEdit={() => setModal({ mode: "edit", task: selected })}

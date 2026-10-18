@@ -37,9 +37,17 @@ export function delegationErrorMessage(err: unknown): string {
 const latest = new Map<string, Delegation | null>();
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
+const prListeners = new Set<(taskId: string) => void>();
+/** Called once per task when its latest delegation moves from queued|running to pr_opened. */
+export function onPrOpened(listener: (taskId: string) => void) {
+  prListeners.add(listener);
+  return () => void prListeners.delete(listener);
+}
 function setLatest(taskId: string, d: Delegation | null) {
+  const prev = latest.get(taskId);
   latest.set(taskId, d);
   emit();
+  if (d?.status === "pr_opened" && isActive(prev?.status)) prListeners.forEach((l) => l(taskId));
 }
 const subscribe = (l: () => void) => {
   listeners.add(l);
@@ -54,12 +62,9 @@ export function useLatestDelegation(
   token: string,
   taskId: string,
   enabled = true,
-  onPrOpened?: () => void,
 ) {
   const d = useSyncExternalStore(subscribe, () => latest.get(taskId));
   const loaded = d !== undefined;
-  const prCb = useRef(onPrOpened);
-  prCb.current = onPrOpened;
 
   useEffect(() => {
     if (!enabled || loaded) return;
@@ -84,7 +89,6 @@ export function useLatestDelegation(
         const next = await api<Delegation>(`/delegations/${id}`, token);
         if (dead) return;
         setLatest(taskId, next);
-        if (next.status === "pr_opened") prCb.current?.();
       } catch {
         /* keep polling; transient */
       }
@@ -256,14 +260,12 @@ export function DelegateControl({
   token,
   taskId,
   compact,
-  onPrOpened,
 }: {
   token: string;
   taskId: string;
   compact?: boolean;
-  onPrOpened?: () => void;
 }) {
-  const d = useLatestDelegation(token, taskId, true, onPrOpened);
+  const d = useLatestDelegation(token, taskId, true);
   const { delegate, cancel, busy, error, setError } = useDelegationActions(token, taskId);
   const [open, setOpen] = useState(false);
   const active = isActive(d?.status);

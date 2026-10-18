@@ -239,6 +239,12 @@ a {
   font-weight: 600;
   border-radius: 8px;
 }
+.sidebar-bottom button svg {
+  flex-shrink: 0;
+}
+.sidebar-bottom button {
+  text-align: left;
+}
 .sidebar-bottom button:hover {
   background: #eeefea;
 }
@@ -246,7 +252,7 @@ a {
   background: #eeefea;
   color: #252821;
 }
-.sidebar-bottom button svg:last-child {
+.sidebar-bottom button svg:last-child:not(:first-child) {
   margin-left: auto;
 }
 .sidebar-foot {

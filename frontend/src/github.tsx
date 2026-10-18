@@ -364,6 +364,7 @@ export function GitHubView({
           <div className="tk-head-actions">
             <Button
               className="button"
+              variant="outline"
               disabled={!projectId || !repo || current?.linked}
               title={!projectId ? "Select a project first" : undefined}
               onClick={linkRepo}
