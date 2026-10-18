@@ -1079,6 +1079,9 @@ function WorkspaceApp() {
     }
   }, [theme]);
 
+  const feedWorkspaceId =
+    workspaces.find((item) => item.id === activeWorkspaceId)?.id || workspaces[0]?.id || null;
+
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
@@ -1108,7 +1111,7 @@ function WorkspaceApp() {
       cancelled = true;
       controller.abort();
     };
-  }, [token, activeProjectId]);
+  }, [token, activeProjectId, feedWorkspaceId]);
 
   useEffect(() => {
     if (!token) {
@@ -1661,6 +1664,7 @@ function WorkspaceApp() {
               token={token}
               email={accountEmail}
               updates={updates}
+              workspace={activeWorkspace}
               section={settingsSection}
               onSectionChange={setSettingsSection}
               onEmailChange={setAccountEmail}

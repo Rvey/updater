@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr
 
 
 class CodeExcerpt(BaseModel):
@@ -491,3 +491,24 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     repo_url: str | None = Field(default=None, max_length=600)
+
+
+class AffinebotLinkWrite(BaseModel):
+    # Lenient on purpose: missing-field 422s would echo the whole body (secret included).
+    # The route validates presence and shape and returns a plain detail.
+    base_url: str = Field(default="", max_length=300)
+    client_id: str = Field(default="", max_length=36)
+    secret: SecretStr = SecretStr("")
+
+
+class AffinebotLinkRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    workspace_id: str
+    base_url: str
+    client_id: str
+    status: str
+    github_owner: str | None = None
+    installation_id: int | None = None
+    last_checked_at: datetime | None = None
+    last_error: str | None = None

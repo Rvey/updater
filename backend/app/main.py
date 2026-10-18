@@ -1541,6 +1541,9 @@ def connect_script() -> PlainTextResponse:
 from .workspace_routes import router as workspace_router  # noqa: E402
 
 app.include_router(workspace_router)
+from .affinebot_routes import router as affinebot_router  # noqa: E402
+
+app.include_router(affinebot_router)
 
 mcp_mount = ProtectedMCPApp()
 app.mount("/", mcp_mount)

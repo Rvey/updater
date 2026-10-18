@@ -276,6 +276,24 @@ class Project(Base):
     workspace: Mapped[Workspace] = relationship(back_populates="projects")
 
 
+class AffinebotLink(Base):
+    """One Affinebot connection per workspace. The secret is only ever stored encrypted/prefixed."""
+
+    __tablename__ = "affinebot_links"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), unique=True)
+    base_url: Mapped[str] = mapped_column(String(300))
+    client_id: Mapped[str] = mapped_column(String(36))
+    secret_enc: Mapped[str] = mapped_column(Text)
+    installation_id: Mapped[int | None] = mapped_column(nullable=True, default=None)
+    github_owner: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | active | error
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    last_error: Mapped[str | None] = mapped_column(String(300), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
 def normalize_database_url(url: str) -> str:
     # Dokploy/env copy-paste often adds surrounding quotes, whitespace, or newlines.
     # Strip them so a valid URL doesn't fail with SQLAlchemy's cryptic

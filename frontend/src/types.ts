@@ -255,3 +255,16 @@ export type Invite = {
   created_at?: string;
   token?: string;
 };
+
+export type AffinebotStatus = "pending" | "active" | "error";
+
+export type AffinebotLink = {
+  workspace_id: string;
+  base_url: string;
+  client_id: string;
+  status: AffinebotStatus;
+  github_owner: string | null;
+  installation_id: number | null;
+  last_checked_at: string | null;
+  last_error: string | null;
+};

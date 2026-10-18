@@ -304,12 +304,12 @@ export function MembersPage({
     run(async () => {
       const api = createApi(token);
       // Existing accounts are added directly; unknown emails get an invite with a one-time token.
-      const result = await api.post<Partial<Invite> & { email?: string }>(
-        `/workspaces/${workspaceId}/members`,
-        { email: inviteEmail.trim(), role: inviteRole },
-      );
-      if (result.token) {
-        setCreated({ email: result.email || inviteEmail.trim(), link: inviteLink(result as Invite) });
+      const result = await api.post<
+        | { status: "added"; member: Member; invite: null }
+        | { status: "invited"; member: null; invite: Invite }
+      >(`/workspaces/${workspaceId}/members`, { email: inviteEmail.trim(), role: inviteRole });
+      if (result.status === "invited" && result.invite?.token) {
+        setCreated({ email: result.invite.email || inviteEmail.trim(), link: inviteLink(result.invite) });
       } else {
         setCreated(null);
       }
