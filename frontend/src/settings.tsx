@@ -1,3 +1,4 @@
+import { apiBase, request as api } from "./lib/api";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Bot,
@@ -17,31 +18,6 @@ import type { Update } from "./types";
 import { Button } from "./components/ui/button";
 import "./settings.css";
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || "";
-
-async function api<T>(
-  path: string,
-  token: string,
-  options?: RequestInit,
-): Promise<T> {
-  const response = await fetch(apiBase + "/api" + path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options?.headers,
-    },
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const error = new Error(
-      body.detail || `Request failed (${response.status})`,
-    ) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return response.json() as Promise<T>;
-}
 
 async function copyText(value: string): Promise<boolean> {
   try {

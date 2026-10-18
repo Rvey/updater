@@ -1,3 +1,4 @@
+import { request as api, withProject } from "./lib/api";
 import { repositoryKey, uniqueRepositories } from "./lib/repositories";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -29,26 +30,7 @@ import type { Note, NoteCategory, NoteColor, NotePriority, NoteStatus } from "./
 import { Button } from "./components/ui/button";
 import "./notes.css";
 
-const apiBase = (import.meta as any).env.VITE_API_BASE_URL || "";
 const FENCE = String.fromCharCode(96, 96, 96);
-
-async function api<T>(path: string, token: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(apiBase + "/api" + path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: "Bearer " + token } : {}),
-      ...options?.headers,
-    },
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const error = new Error(body.detail || ("Request failed (" + response.status + ")")) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return response.json() as Promise<T>;
-}
 
 export const NOTE_COLORS: { value: NoteColor; label: string; swatch: string; accent: string }[] = [
   { value: "default", label: "Default", swatch: "#d8d8d2", accent: "#8a8f85" },
@@ -729,7 +711,7 @@ function DetailDrawer({ note, onClose, onEdit, onTogglePin, onToggleDone, onArch
   );
 }
 
-export function NotesView({ token, repos }: { token: string; repos: string[] }) {
+export function NotesView({ token, repos, projectId = null }: { token: string; repos: string[]; projectId?: string | null }) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -764,7 +746,7 @@ export function NotesView({ token, repos }: { token: string; repos: string[] }) 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    api<Note[]>("/notes", token).then((items) => {
+    api<Note[]>(withProject("/notes", projectId), token).then((items) => {
       if (cancelled) return;
       setNotes(items.map(normalizeNote));
       setError("");
@@ -773,7 +755,7 @@ export function NotesView({ token, repos }: { token: string; repos: string[] }) 
       setError(err instanceof Error ? err.message : "Unable to load notes");
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [token]);
+  }, [token, projectId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -896,7 +878,7 @@ export function NotesView({ token, repos }: { token: string; repos: string[] }) 
         setNotes((cur) => cur.map((x) => (x.id === editing.id ? nn : x)));
       } else {
         const payload = draftToPayload(draft);
-        const created = await api<Note>("/notes", token, { method: "POST", body: JSON.stringify(payload) });
+        const created = await api<Note>("/notes", token, { method: "POST", body: JSON.stringify(projectId ? { ...payload, project_id: projectId } : payload) });
         const nn = normalizeNote(created);
         setNotes((cur) => [nn].concat(cur));
         setSelectedId(nn.id);
@@ -940,7 +922,7 @@ export function NotesView({ token, repos }: { token: string; repos: string[] }) 
   const duplicateNote = async (n: Note) => {
     setBusyId(n.id); setError("");
     try {
-      const payload = { title: n.title + " (copy)", content: n.content, category: n.category, status: "open", priority: n.priority, tags: n.tags, repository: n.repository, branch: n.branch, file_path: n.file_path, commit_hash: n.commit_hash, related_url: n.related_url, color: n.color, pinned: false, archived: false };
+      const payload = { title: n.title + " (copy)", content: n.content, category: n.category, status: "open", priority: n.priority, tags: n.tags, repository: n.repository, branch: n.branch, file_path: n.file_path, commit_hash: n.commit_hash, related_url: n.related_url, color: n.color, pinned: false, archived: false, ...(projectId ? { project_id: projectId } : {}) };
       const created = await api<Note>("/notes", token, { method: "POST", body: JSON.stringify(payload) });
       const nn = normalizeNote(created);
       setNotes((cur) => [nn].concat(cur));

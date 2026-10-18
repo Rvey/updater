@@ -11,6 +11,7 @@ class CodeExcerpt(BaseModel):
 
 
 class UpdateCreate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     external_id: str | None = Field(default=None, max_length=255)
     title: str = Field(min_length=3, max_length=180)
     summary: str = Field(min_length=10)
@@ -67,6 +68,7 @@ TECH_DEBT_STATUSES = ("open", "in-progress", "resolved", "wont-fix")
 
 
 class NoteCreate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     title: str = Field(min_length=1, max_length=180)
     content: str = Field(default="", max_length=10000)
     color: str = Field(default="default", max_length=20)
@@ -85,6 +87,7 @@ class NoteCreate(BaseModel):
 
 
 class NoteUpdate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     title: str | None = Field(default=None, min_length=1, max_length=180)
     content: str | None = Field(default=None, max_length=10000)
     color: str | None = Field(default=None, max_length=20)
@@ -106,6 +109,7 @@ class NoteRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    project_id: str | None = None
     title: str
     content: str
     color: str
@@ -130,6 +134,7 @@ TASK_PRIORITIES = ("low", "medium", "high")
 
 
 class TaskCreate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     title: str = Field(min_length=1, max_length=180)
     description: str = Field(default="", max_length=8000)
     status: str = Field(default="backlog", max_length=20)
@@ -143,6 +148,7 @@ class TaskCreate(BaseModel):
 
 
 class TaskUpdate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     title: str | None = Field(default=None, min_length=1, max_length=180)
     description: str | None = Field(default=None, max_length=8000)
     status: str | None = Field(default=None, max_length=20)
@@ -159,6 +165,7 @@ class TaskRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    project_id: str | None = None
     title: str
     description: str
     status: str
@@ -178,6 +185,7 @@ class TaskRead(BaseModel):
 
 
 class GitHubSyncRequest(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     repo: str = Field(min_length=3, max_length=300)
     token: str = Field(min_length=10, max_length=300)
     state: str = Field(default="open", pattern="^(open|closed|all)$")
@@ -193,6 +201,7 @@ class GitHubSyncResult(BaseModel):
 
 
 class GitHubLinkCreate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     repo: str = Field(min_length=3, max_length=300)
     token: str = Field(min_length=10, max_length=300)
 
@@ -201,6 +210,7 @@ class GitHubLinkRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    project_id: str | None = None
     repo: str
     created_at: datetime
     last_event_at: datetime | None
@@ -208,6 +218,7 @@ class GitHubLinkRead(BaseModel):
 
 class TaskReorder(BaseModel):
     columns: dict[str, list[str]]
+    project_id: str | None = Field(default=None, max_length=80)
 
 
 class ContextRequestCreate(BaseModel):
@@ -244,6 +255,7 @@ class ContextRequestClaim(BaseModel):
 
 
 class TechDebtCreate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     title: str = Field(min_length=3, max_length=180)
     scope: str = Field(min_length=3, max_length=300)
     description: str = Field(min_length=10)
@@ -262,6 +274,7 @@ class TechDebtCreate(BaseModel):
 
 
 class TechDebtUpdate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     title: str | None = Field(default=None, min_length=3, max_length=180)
     scope: str | None = Field(default=None, min_length=3, max_length=300)
     description: str | None = Field(default=None, min_length=10)
@@ -281,6 +294,7 @@ class TechDebtRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    project_id: str | None = None
     title: str
     scope: str
     description: str
@@ -305,6 +319,7 @@ class UpdateRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    project_id: str | None = None
     external_id: str | None
     user_id: str | None = None
     title: str
@@ -372,3 +387,107 @@ class ApiKeyRead(BaseModel):
     created_at: datetime
     last_used_at: datetime | None
     revoked_at: datetime | None
+
+
+WORKSPACE_ROLES = ("owner", "member")
+_ROLE_PATTERN = "^(owner|member)$"
+
+
+class ProjectRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workspace_id: str
+    name: str
+    slug: str
+    repo_url: str | None = None
+    is_default: bool = False
+    created_at: datetime
+
+
+class ProjectBrief(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    slug: str
+    repo_url: str | None = None
+    is_default: bool = False
+
+
+class WorkspaceRead(BaseModel):
+    id: str
+    name: str
+    slug: str
+    role: str
+    projects: list[ProjectBrief] = Field(default_factory=list)
+
+
+class WorkspaceCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class WorkspaceRename(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class MemberRead(BaseModel):
+    user_id: str
+    email: str
+    role: str
+    created_at: datetime
+
+
+class InviteRead(BaseModel):
+    id: str
+    email: str
+    role: str
+    created_at: datetime
+    expires_at: datetime
+
+
+class InviteCreated(BaseModel):
+    id: str
+    email: str
+    role: str
+    token: str
+    expires_at: datetime
+
+
+class MemberAdd(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    role: str = Field(default="member", pattern=_ROLE_PATTERN)
+
+
+class MemberAddResult(BaseModel):
+    status: str  # "added" | "invited"
+    member: MemberRead | None = None
+    invite: InviteCreated | None = None
+
+
+class MemberRoleUpdate(BaseModel):
+    role: str = Field(pattern=_ROLE_PATTERN)
+
+
+class InviteCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    role: str = Field(default="member", pattern=_ROLE_PATTERN)
+
+
+class InviteAccept(BaseModel):
+    token: str = Field(min_length=8, max_length=200)
+
+
+class InviteAccepted(BaseModel):
+    workspace_id: str
+    role: str
+
+
+class ProjectCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    repo_url: str | None = Field(default=None, max_length=600)
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    repo_url: str | None = Field(default=None, max_length=600)

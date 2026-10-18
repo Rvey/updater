@@ -1,13 +1,15 @@
 """Adopt legacy, unowned rows into an account after upgrading to per-account scoping.
 
-Why this is safe to run in stages: rows written before scoping have ``user_id IS NULL``
-and stay visible to *every* signed-in account. Assigning them to an owner never removes
-them from that owner's view, so you can assign one table at a time, check it, and undo it.
+Rows written before scoping have ``user_id IS NULL``. With workspaces, an account only
+sees rows in projects it belongs to, so adoption stamps both ``user_id`` and ``project_id``
+(the target account's default project, or the one named by ``--project``). You can assign
+one table at a time, check it, and undo it.
 
     cd backend
     uv run python -m app.backfill_ownership --dry-run                    # what exists
     uv run python -m app.backfill_ownership --list --table updates       # who wrote what
     uv run python -m app.backfill_ownership --email you@example.com --repo github.com/you
+    uv run python -m app.backfill_ownership --email you@example.com --project my-project
     uv run python -m app.backfill_ownership --undo --run-id <id>         # put it back
 
 Every write is recorded in ``ownership_backfills`` (run id, table, and the exact row ids
@@ -24,6 +26,7 @@ from collections import Counter
 from sqlalchemy import select, text, update
 
 from .auth import normalize_email
+from . import workspaces as ws
 from .db import Note, SessionLocal, Task, TechDebt, Update, User, engine
 
 TABLES = {
@@ -46,9 +49,14 @@ def _ensure_ledger() -> None:
                 "applied_at TIMESTAMPTZ, "
                 "target_email VARCHAR(320), "
                 "repo_filter VARCHAR(300), "
-                "rows_by_table TEXT)"
+                "rows_by_table TEXT, "
+                "project_id VARCHAR(36))"
             )
         )
+        from sqlalchemy import inspect
+
+        if "project_id" not in {c["name"] for c in inspect(connection).get_columns(LEDGER)}:
+            connection.execute(text(f"ALTER TABLE {LEDGER} ADD COLUMN project_id VARCHAR(36)"))
 
 
 def _unowned_rows(db, model, repo_column: str | None, repo_filter: str | None):
@@ -89,13 +97,13 @@ def _print_rows(db, targets, table: str) -> None:
 
 def _undo(db, run_id: str) -> int:
     row = db.execute(
-        text(f"SELECT target_email, rows_by_table FROM {LEDGER} WHERE run_id = :run_id"),
+        text(f"SELECT target_email, rows_by_table, project_id FROM {LEDGER} WHERE run_id = :run_id"),
         {"run_id": run_id},
     ).first()
     if row is None:
         print(f"No backfill recorded under run id {run_id}.")
         return 1
-    target_email, rows_by_table = row
+    target_email, rows_by_table, project_id = row
     adopted: dict[str, list[str]] = json.loads(rows_by_table or "{}")
     user = db.scalar(select(User).where(User.email == target_email))
     if user is None:
@@ -104,11 +112,10 @@ def _undo(db, run_id: str) -> int:
     # Undo exactly the rows this run adopted, leaving anything the account already owned.
     for name, ids in adopted.items():
         model = TABLES[name][0]
-        result = db.execute(
-            update(model)
-            .where(model.id.in_(ids), model.user_id == user.id)
-            .values(user_id=None)
-        )
+        conditions = [model.id.in_(ids), model.user_id == user.id]
+        if project_id:
+            conditions.append(model.project_id == project_id)
+        result = db.execute(update(model).where(*conditions).values(user_id=None, project_id=None))
         if result.rowcount:
             print(f"  {name:10} returned {result.rowcount} row(s) to unowned")
     db.execute(text(f"DELETE FROM {LEDGER} WHERE run_id = :run_id"), {"run_id": run_id})
@@ -124,6 +131,7 @@ def main() -> int:
     )
     parser.add_argument("--email", help="Account that should own the rows")
     parser.add_argument("--table", choices=sorted(TABLES), help="Limit the work to one table")
+    parser.add_argument("--project", help="Project id or slug (default: the account's default project)")
     parser.add_argument("--repo", help="Only adopt rows whose repo contains this text (e.g. github.com/you)")
     parser.add_argument("--dry-run", action="store_true", help="Report counts without writing")
     parser.add_argument("--list", action="store_true", help="List the unowned rows themselves")
@@ -156,6 +164,15 @@ def main() -> int:
         if user is None:
             parser.error(f"No account found for {email}. Register it in the web UI first.")
 
+        if args.project:
+            try:
+                project_id = ws.find_project(db, user.id, args.project).id
+            except Exception as exc:
+                parser.error(f"Project {args.project!r} not reachable by {email}: {getattr(exc, 'detail', exc)}")
+        else:
+            default = ws.default_project_for(db, user.id)
+            project_id = default.id if default else None
+
         performed: dict[str, int] = {}
         for name, (model, repo_column) in targets.items():
             pending = {row.id for row in _unowned_rows(db, model, repo_column, args.repo)}
@@ -164,7 +181,7 @@ def main() -> int:
             if args.dry_run:
                 print(f"{name}: {len(pending)} unowned row(s) would be assigned to {email}")
                 continue
-            db.execute(update(model).where(model.id.in_(pending)).values(user_id=user.id))
+            db.execute(update(model).where(model.id.in_(pending)).values(user_id=user.id, project_id=project_id))
             performed[name] = sorted(pending)
             print(f"{name}: assigned {len(pending)} unowned row(s) to {email}")
 
@@ -179,10 +196,10 @@ def main() -> int:
         run_id = args.run_id or str(uuid.uuid4())
         db.execute(
             text(
-                f"INSERT INTO {LEDGER} (run_id, applied_at, target_email, repo_filter, rows_by_table) "
-                "VALUES (:run_id, CURRENT_TIMESTAMP, :email, :repo, :rows)"
+                f"INSERT INTO {LEDGER} (run_id, applied_at, target_email, repo_filter, rows_by_table, project_id) "
+                "VALUES (:run_id, CURRENT_TIMESTAMP, :email, :repo, :rows, :project_id)"
             ),
-            {"run_id": run_id, "email": email, "repo": args.repo or "", "rows": json.dumps(performed)},
+            {"run_id": run_id, "email": email, "repo": args.repo or "", "rows": json.dumps(performed), "project_id": project_id},
         )
         db.commit()
         print(f"\nRecorded as run {run_id}. Undo with:")

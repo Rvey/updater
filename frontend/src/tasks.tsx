@@ -1,3 +1,4 @@
+import { apiBase, request as api, withProject } from "./lib/api";
 import { repositoryKey, uniqueRepositories } from "./lib/repositories";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
@@ -39,31 +40,6 @@ import {
 } from "./components/ui/kanban";
 import "./tasks.css";
 
-const apiBase = (import.meta as any).env.VITE_API_BASE_URL || "";
-
-async function api<T>(
-  path: string,
-  token: string,
-  options?: RequestInit,
-): Promise<T> {
-  const response = await fetch(apiBase + "/api" + path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: "Bearer " + token } : {}),
-      ...options?.headers,
-    },
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const error = new Error(
-      body.detail || "Request failed (" + response.status + ")",
-    ) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return response.json() as Promise<T>;
-}
 
 const STATUS_ORDER: TaskStatus[] = ["backlog", "in-progress", "review", "done"];
 
@@ -1001,9 +977,11 @@ function TaskDetail({
 export function TasksView({
   token,
   repos,
+  projectId = null,
 }: {
   token: string;
   repos: string[];
+  projectId?: string | null;
 }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1029,7 +1007,7 @@ export function TasksView({
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const data = await api<Task[]>("/tasks", token);
+      const data = await api<Task[]>(withProject("/tasks", projectId), token);
       setTasks(data);
       setError("");
     } catch (err) {
@@ -1042,7 +1020,7 @@ export function TasksView({
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, projectId]);
 
   const repoOptions = useMemo(
     () =>
@@ -1121,7 +1099,7 @@ export function TasksView({
     try {
       const created = await api<Task>("/tasks", token, {
         method: "POST",
-        body: JSON.stringify(value),
+        body: JSON.stringify(projectId ? { ...value, project_id: projectId } : value),
       });
       setTasks((current) => [...current, created]);
       setSelectedId(created.id);

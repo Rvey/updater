@@ -61,6 +61,7 @@ export type NotePriority = "none" | "low" | "medium" | "high";
 
 export type Note = {
   id: string;
+  project_id?: string | null;
   title: string;
   content: string;
   color: NoteColor;
@@ -82,6 +83,7 @@ export type Note = {
 
 export type Update = {
   id: string;
+  project_id?: string | null;
   external_id: string | null;
   title: string;
   summary: string;
@@ -122,6 +124,7 @@ export type TechDebtStatus = "open" | "in-progress" | "resolved" | "wont-fix";
 
 export type TechDebt = {
   id: string;
+  project_id?: string | null;
   title: string;
   scope: string;
   description: string;
@@ -160,6 +163,7 @@ export type TaskPriority = "low" | "medium" | "high";
 
 export type Task = {
   id: string;
+  project_id?: string | null;
   title: string;
   description: string;
   status: TaskStatus;
@@ -217,3 +221,37 @@ export type TaskUpdate = Partial<
     | "due_date"
   >
 >;
+
+export type WorkspaceRole = "owner" | "member";
+
+export type WorkspaceProject = {
+  id: string;
+  name: string;
+  slug: string;
+  repo_url: string | null;
+  is_default: boolean;
+};
+
+export type Workspace = {
+  id: string;
+  name: string;
+  slug: string;
+  role: WorkspaceRole;
+  projects: WorkspaceProject[];
+};
+
+export type Member = {
+  user_id: string;
+  email: string;
+  role: WorkspaceRole;
+  created_at: string;
+};
+
+export type Invite = {
+  id: string;
+  email: string;
+  role: WorkspaceRole;
+  expires_at: string;
+  created_at?: string;
+  token?: string;
+};

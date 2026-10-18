@@ -2,7 +2,7 @@ from collections.abc import Generator
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, UniqueConstraint, create_engine
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 from .config import get_settings
@@ -41,6 +41,7 @@ class Update(Base):
     impact_notes: Mapped[list["ImpactNote"]] = relationship(back_populates="update", cascade="all, delete-orphan", order_by="ImpactNote.created_at")
     code_context: Mapped[list[dict]] = mapped_column(JSON, default=list)
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, default=None)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, default=None, index=True)
     context_requests: Mapped[list["ContextRequest"]] = relationship(back_populates="update", cascade="all, delete-orphan", order_by="ContextRequest.created_at")
 
 
@@ -71,6 +72,7 @@ class Note(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, default=None)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, default=None, index=True)
     title: Mapped[str] = mapped_column(String(180), default="")
     content: Mapped[str] = mapped_column(Text, default="")
     color: Mapped[str] = mapped_column(String(20), default="default")
@@ -92,9 +94,20 @@ class Note(Base):
 
 class Task(Base):
     __tablename__ = "tasks"
+    __table_args__ = (
+        Index(
+            "uq_tasks_project_external",
+            "project_id",
+            "external_id",
+            unique=True,
+            sqlite_where=text("external_id IS NOT NULL"),
+            postgresql_where=text("external_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, default=None)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, default=None, index=True)
     title: Mapped[str] = mapped_column(String(180))
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(20), default="backlog")
@@ -117,10 +130,14 @@ class GitHubRepoLink(Base):
     """A repository whose webhook events are mirrored into one account's tasks."""
 
     __tablename__ = "github_repo_links"
-    __table_args__ = (UniqueConstraint("user_id", "repo"),)
+    # The old UniqueConstraint(user_id, repo) is replaced by a unique (project_id, repo) index.
+    # Databases created before projects keep the old constraint (SQLite and Postgres cannot drop
+    # it without manual DDL); see main._ensure_project_columns.
+    __table_args__ = (Index("uq_github_repo_links_project_repo", "project_id", "repo", unique=True),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True, default=None)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, default=None, index=True)
     repo: Mapped[str] = mapped_column(String(300), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
@@ -185,6 +202,7 @@ class TechDebt(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, default=None)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, default=None, index=True)
     title: Mapped[str] = mapped_column(String(180))
     scope: Mapped[str] = mapped_column(String(300))
     description: Mapped[str] = mapped_column(Text)
@@ -203,6 +221,59 @@ class TechDebt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+
+
+class Workspace(Base):
+    __tablename__ = "workspaces"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    name: Mapped[str] = mapped_column(String(120))
+    slug: Mapped[str] = mapped_column(String(80), unique=True)
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    members: Mapped[list["WorkspaceMember"]] = relationship(back_populates="workspace", cascade="all, delete-orphan", order_by="WorkspaceMember.created_at")
+    projects: Mapped[list["Project"]] = relationship(back_populates="workspace", cascade="all, delete-orphan", order_by="Project.created_at")
+
+
+class WorkspaceMember(Base):
+    __tablename__ = "workspace_members"
+    __table_args__ = (UniqueConstraint("workspace_id", "user_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(20), default="member")  # owner | member
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    workspace: Mapped[Workspace] = relationship(back_populates="members")
+    user: Mapped["User"] = relationship()
+
+
+class WorkspaceInvite(Base):
+    __tablename__ = "workspace_invites"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    email: Mapped[str] = mapped_column(String(320))
+    role: Mapped[str] = mapped_column(String(20), default="member")
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    invited_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+
+
+class Project(Base):
+    __tablename__ = "projects"
+    __table_args__ = (UniqueConstraint("workspace_id", "slug"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    slug: Mapped[str] = mapped_column(String(80))
+    repo_url: Mapped[str | None] = mapped_column(String(600), nullable=True, default=None)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    workspace: Mapped[Workspace] = relationship(back_populates="projects")
 
 
 def normalize_database_url(url: str) -> str:
