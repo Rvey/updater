@@ -168,6 +168,57 @@ If `POST /mcp` answers `421 Invalid Host header`, the fix is server-side: set `M
 
 Title, summary, repo URL, reason, implementation explanation, expected impact, optional tradeoffs + learning notes, files changed, tags, agent name, branch, commit, PR link, shipping date. Dated impact notes and question threads stay attached to the update. You can also add updates manually from the UI.
 
+## Workspaces & projects
+
+Data is scoped to a **workspace**. Sign-up creates a default workspace with a `General` project.
+
+- **Members.** A workspace has two roles: `owner` and `member`. Owners add members by email (an existing account joins directly) or create an invite. Invite links carry the token `?invite=<token>`, are shown once, expire after 7 days, and only accept for the matching email. No email is sent, so copy the link. A workspace always keeps at least one owner.
+- **Projects.** A project is a free container inside a workspace, with an optional `repo_url`. Tasks, notes, tech debt, updates and GitHub repo links belong to one project. Lists without `project_id` show every project you can reach. Creates default to your default project.
+- Non-members get `404` on everything in a workspace. A project that still has tasks, notes or tech debt cannot be deleted (`409`), and neither can the default project.
+
+## Connecting Affinebot
+
+A workspace links to an Affinebot instance to load GitHub repos and delegate work. The link is per workspace, with one GitHub owner per link in v1.
+
+1. **Mint a client (Affinebot operator).** Use the workspace id as `client_id`:
+
+   ```bash
+   curl -X POST https://$DOMAIN/link/admin/clients \
+     -H "Authorization: Bearer $AFFINEBOT_ADMIN_TOKEN" -H 'Content-Type: application/json' \
+     -d '{"client_id":"<workspace-uuid>","label":"My workspace","owner":"acme"}'
+   ```
+
+   `owner` is the GitHub user or org where the Affinebot GitHub App is installed. The response contains the token (`abl_…`) once; Affinebot keeps only its hash. Revoke with `DELETE /link/admin/clients/<client_id>`.
+2. **Paste it in the updater.** As a workspace owner, open **Settings > Integrations** and enter `base_url`, `client_id` (the workspace id, prefilled) and `token`. The updater checks Affinebot and shows `active` or `error`. Members see the status read-only.
+3. **Shared callback secret.** Affinebot signs delegation callbacks, and the updater verifies them with one shared value:
+   - updater: `AFFINEBOT_CALLBACK_SECRET`
+   - Affinebot: `UPDATER_CALLBACK_SECRET` (the same value)
+4. **Public URL.** Set `UPDATER_PUBLIC_URL` on the updater to its public origin, without a trailing slash. Affinebot posts status to `{UPDATER_PUBLIC_URL}/api/delegations/{id}/status`.
+5. **Allowed origins.** On Affinebot, set `UPDATER_CALLBACK_ALLOWED_ORIGINS` to the updater origin (for example `https://api.example.com`). Affinebot rejects delegations whose callback origin is not listed.
+
+## GitHub
+
+Repos, issues and PRs come from the **Affinebot GitHub App**. The updater never holds a GitHub token, and sync requests carry no token field. The personal access token flow is removed.
+
+- The App needs **Metadata: read**, **Issues: read & write**, **Pull requests: read & write** and **Contents: read & write**. Changing permissions requires re-approval on each installation.
+- Point the App's webhook at `<updater>/api/github/webhook` (for example `https://api.example.com/api/github/webhook`), with the secret in `GITHUB_WEBHOOK_SECRET`. Subscribe to `issues` and `pull_request`. Events fan out to the project that links the repo.
+- Import issues from the GitHub view as tasks (`github:owner/repo#n`). A sync reads at most 10 pages of 100 items and sets `truncated` when it stops early.
+
+## Delegating to Claude Code
+
+Any workspace member can delegate a task, usually an imported issue, to Claude Code from the task detail. The updater records the delegation, and Affinebot runs the work on its `worker-claude` service with `ANTHROPIC_API_KEY`.
+
+```
+queued → running → pr_opened     (task moves to review, tagged claude-code)
+                 → failed        (error stored, e.g. no_changes; Retry starts a new run)
+queued | running → cancelled     (set by the user; terminal)
+```
+
+- Only one active (`queued` or `running`) delegation exists per task.
+- Each run has a per-job budget (`CLAUDE_CODE_BUDGET_USD`, default 2.00) and timeout (`CLAUDE_CODE_TIMEOUT_S`, default 1500). Affinebot's README lists the rest.
+- Status only moves forward. If a callback is lost, a queued or running delegation older than 60 seconds is refreshed from Affinebot when it is read.
+- **Sandbox caveat.** A run is a scrubbed subprocess, not a container. It gets a minimal environment (no GitHub token, no other secrets), read and edit tools only, plus a timeout and budget. It still shares the worker's filesystem and network, so keep the worker's secrets to a minimum. Container-per-job is not in v1.
+
 ## Configuration
 
 Create `backend/.env` from `backend/.env.example`:
@@ -191,6 +242,18 @@ LLM_MODEL=google/gemini-3.5-flash-lite
 - For a deployed MCP endpoint, set `MCP_ALLOWED_HOSTS` to its public API hostname (bare hostname is enough — any port on it is accepted). The hostname from `UPDATER_API_URL` is used as a fallback for the same check. Without this, every remote `POST /mcp` is rejected with `421 Invalid Host header` before any MCP logic runs.
 - Without `OPENROUTER_API_KEY`, questions still work from saved context and say so.
 - Never commit `.env`, `*.db`, or tokens. They are gitignored.
+
+### Affinebot and GitHub variables
+
+| Variable | Purpose |
+| --- | --- |
+| `AFFINEBOT_CALLBACK_SECRET` | Same value as Affinebot's `UPDATER_CALLBACK_SECRET`. Verifies `X-Affinebot-Signature` on delegation callbacks. Empty = callbacks are rejected (`503`). |
+| `UPDATER_PUBLIC_URL` | Public origin of this API, no trailing slash. Used to build the callback URL. Empty = delegation returns `503`. |
+| `AFFINEBOT_TIMEOUT_S` | Timeout for calls to Affinebot (default `10`). |
+| `UPDATER_SECRET_KEY` | Optional. Encrypts stored Affinebot link tokens. Empty = tokens are stored as plain text. |
+| `GITHUB_WEBHOOK_SECRET` | Secret for the GitHub App webhook at `/api/github/webhook`. |
+
+Affinebot-side variables (`ANTHROPIC_API_KEY`, `UPDATER_CALLBACK_SECRET`, `UPDATER_CALLBACK_ALLOWED_ORIGINS`, `CLAUDE_CODE_*`) are listed in Affinebot's README.
 
 ## Deploy
 
