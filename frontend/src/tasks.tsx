@@ -29,6 +29,7 @@ import type {
   TaskUpdate,
 } from "./types";
 import { Button } from "./components/ui/button";
+import { CardDelegationBadge, DelegateControl, canDelegateTask, useLatestDelegation } from "./delegation";
 import {
   Kanban,
   KanbanBoard,
@@ -210,10 +211,12 @@ function StatusPill({ status }: { status: TaskStatus }) {
 
 function TaskCard({
   task,
+  token,
   isOverlay,
   onOpen,
 }: {
   task: Task;
+  token?: string;
   isOverlay?: boolean;
   onOpen?: () => void;
 }) {
@@ -244,6 +247,11 @@ function TaskCard({
           {task.tags.length > 3 && (
             <span className="tk-chip more">+{task.tags.length - 3}</span>
           )}
+        </div>
+      )}
+      {token && !isOverlay && canDelegateTask(task) && (
+        <div className="tk-card-tags">
+          <CardDelegationBadge token={token} task={task} />
         </div>
       )}
       <div className="tk-card-foot">
@@ -284,11 +292,13 @@ function TaskCard({
 function TaskColumn({
   status,
   tasks,
+  token,
   onOpen,
   onAdd,
 }: {
   status: TaskStatus;
   tasks: Task[];
+  token: string;
   onOpen: (task: Task) => void;
   onAdd: (status: TaskStatus) => void;
 }) {
@@ -314,7 +324,7 @@ function TaskColumn({
       </header>
       <KanbanColumnContent value={status} className="tk-col-body">
         {tasks.map((task) => (
-          <TaskCard key={task.id} task={task} onOpen={() => onOpen(task)} />
+          <TaskCard key={task.id} task={task} token={token} onOpen={() => onOpen(task)} />
         ))}
         {tasks.length === 0 && (
           <div className="tk-col-empty">
@@ -715,8 +725,30 @@ function TaskModal({
   );
 }
 
+function DelegationSection({
+  token,
+  taskId,
+  onPrOpened,
+}: {
+  token: string;
+  taskId: string;
+  onPrOpened: () => void;
+}) {
+  const d = useLatestDelegation(token, taskId, true);
+  return (
+    <section className="tk-section">
+      <h3>Claude Code</h3>
+      <DelegateControl token={token} taskId={taskId} onPrOpened={onPrOpened} />
+      {d?.status === "failed" && d.error && <p className="dg-fail">{d.error}</p>}
+      {d?.status === "pr_opened" && d.summary && <p className="dg-summary">{d.summary}</p>}
+    </section>
+  );
+}
+
 function TaskDetail({
   task,
+  token,
+  onPrOpened,
   busy,
   onMove,
   onEdit,
@@ -724,6 +756,8 @@ function TaskDetail({
   onClose,
 }: {
   task: Task;
+  token: string;
+  onPrOpened: () => void;
   busy: string;
   onMove: (status: TaskStatus) => void;
   onEdit: () => void;
@@ -799,6 +833,10 @@ function TaskDetail({
             </span>
           )}
         </div>
+
+        {canDelegateTask(task) && (
+          <DelegationSection token={token} taskId={task.id} onPrOpened={onPrOpened} />
+        )}
 
         <section className="tk-section">
           <h3>Description</h3>
@@ -990,6 +1028,15 @@ export function TasksView({
     const timer = window.setTimeout(() => setToast(""), 2600);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  const refreshTask = async (id: string) => {
+    try {
+      const fresh = await api<Task>("/tasks/" + id, token);
+      setTasks((current) => current.map((t) => (t.id === id ? fresh : t)));
+    } catch {
+      /* ignore; next full load will catch up */
+    }
+  };
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -1337,6 +1384,7 @@ export function TasksView({
                   key={status}
                   status={status}
                   tasks={columns[status]}
+                  token={token}
                   onOpen={(task) => setSelectedId(task.id)}
                   onAdd={(target) =>
                     setModal({ mode: "create", status: target })
@@ -1359,6 +1407,8 @@ export function TasksView({
         <TaskDetail
           key={selected.id}
           task={selected}
+          token={token}
+          onPrOpened={() => refreshTask(selected.id)}
           busy={busy}
           onMove={(status) => changeStatus(selected, status)}
           onEdit={() => setModal({ mode: "edit", task: selected })}

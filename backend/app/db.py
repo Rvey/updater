@@ -161,6 +161,32 @@ class ContextRequest(Base):
     update: Mapped[Update] = relationship(back_populates="context_requests")
 
 
+class Delegation(Base):
+    """One run of Claude Code (through Affinebot) on a task. Statuses only move forward."""
+
+    __tablename__ = "delegations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, default=None, index=True)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, default=None, index=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    repo: Mapped[str] = mapped_column(String(300))
+    issue_number: Mapped[int | None] = mapped_column(nullable=True, default=None)
+    instruction: Mapped[str] = mapped_column(Text, default="")
+    base_branch: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    status: Mapped[str] = mapped_column(String(20), default="queued")  # queued|running|pr_opened|failed|cancelled
+    remote_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
+    branch: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    pr_url: Mapped[str | None] = mapped_column(String(600), nullable=True, default=None)
+    pr_number: Mapped[int | None] = mapped_column(nullable=True, default=None)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+
+
 class User(Base):
     __tablename__ = "users"
 

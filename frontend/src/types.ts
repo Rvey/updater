@@ -182,6 +182,30 @@ export type Task = {
   completed_at: string | null;
 };
 
+export type DelegationStatus =
+  | "queued"
+  | "running"
+  | "pr_opened"
+  | "failed"
+  | "cancelled";
+
+export type Delegation = {
+  id: string;
+  task_id: string;
+  project_id: string | null;
+  repo: string;
+  issue_number: number | null;
+  status: DelegationStatus;
+  branch: string | null;
+  pr_url: string | null;
+  pr_number: number | null;
+  error: string | null;
+  summary: string | null;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+};
+
 export type GitHubSyncResult = {
   repo: string;
   created: number;

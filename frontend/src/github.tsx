@@ -19,6 +19,7 @@ import type {
   GitHubSyncResult,
 } from "./types";
 import { Button } from "./components/ui/button";
+import { DelegateControl } from "./delegation";
 import "./tasks.css";
 import "./github.css";
 
@@ -495,6 +496,11 @@ export function GitHubView({
                   importing={busyNumber === item.number}
                   onImport={importItem}
                   onOpenTask={onOpenTask}
+                  actions={
+                    item.task_id && !item.is_pr ? (
+                      <DelegateControl token={token} taskId={item.task_id} compact />
+                    ) : undefined
+                  }
                 />
               ))}
             </ul>

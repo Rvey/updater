@@ -64,11 +64,16 @@ def run_sync(
     state: str = "open",
     include_prs: bool = True,
     include_issues: bool = True,
+    numbers: list[int] | None = None,
 ) -> GitHubSyncResult:
     """Fetch every page from Affinebot first, then upsert tasks keyed (external_id, project_id)."""
     kind = "all" if include_prs and include_issues else "pr" if include_prs else "issue" if include_issues else None
     raw: list[dict] = []
     truncated = False
+    wanted = set(numbers) if numbers is not None else None
+    missing = set(wanted) if wanted is not None else None
+    if wanted is not None and not wanted:
+        kind = None
     if kind is not None:
         page: int | None = 1
         pages = 0
@@ -80,8 +85,14 @@ def run_sync(
                 data = client.items(repo, kind=kind, state=state, page=page, per_page=PAGE_SIZE)
             except AffinebotError as exc:
                 raise _error(exc) from None
-            raw.extend(data.get("items") or [])
+            rows = data.get("items") or []
+            if wanted is not None:
+                rows = [row for row in rows if row.get("number") in wanted]
+                missing -= {row.get("number") for row in rows}
+            raw.extend(rows)
             pages += 1
+            if wanted is not None and not missing:
+                break
             nxt = data.get("next_page")
             page = nxt if isinstance(nxt, int) and nxt > page else None
     items = items_from_affinebot(repo, raw)
@@ -174,6 +185,7 @@ def sync_github(
     return run_sync(
         db, client, project, user.id if user else None, repo,
         state=payload.state, include_prs=payload.include_prs, include_issues=payload.include_issues,
+        numbers=payload.numbers,
     )
 
 

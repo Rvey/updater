@@ -891,6 +891,10 @@ async def github_webhook(request: Request, db: Session = Depends(get_db)) -> dic
         return {"ok": True, "pong": True}
     try:
         payload = json.loads(body)
+        if event == "pull_request":
+            from .delegation_routes import apply_pr_webhook
+
+            apply_pr_webhook(db, payload)
         parsed = item_from_webhook(event, payload)
     except (ValueError, KeyError, TypeError):
         raise HTTPException(status_code=400, detail="Malformed payload")
@@ -1487,6 +1491,9 @@ app.include_router(affinebot_router)
 from .github_routes import router as github_router  # noqa: E402
 
 app.include_router(github_router)
+from .delegation_routes import router as delegation_router  # noqa: E402
+
+app.include_router(delegation_router)
 
 mcp_mount = ProtectedMCPApp()
 app.mount("/", mcp_mount)

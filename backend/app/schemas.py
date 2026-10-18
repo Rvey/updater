@@ -192,6 +192,7 @@ class GitHubSyncRequest(BaseModel):
     state: str = Field(default="open", pattern="^(open|closed|all)$")
     include_issues: bool = True
     include_prs: bool = Field(default=True, validation_alias=AliasChoices("include_prs", "include_pull_requests"))
+    numbers: list[int] | None = Field(default=None, max_length=200)  # only import these issue/PR numbers
 
 
 class GitHubSyncResult(BaseModel):
@@ -549,3 +550,27 @@ class AffinebotLinkRead(BaseModel):
     installation_id: int | None = None
     last_checked_at: datetime | None = None
     last_error: str | None = None
+
+
+class DelegateRequest(BaseModel):
+    instruction: str | None = Field(default=None, max_length=4000)
+    base_branch: str | None = Field(default=None, max_length=255)
+
+
+class DelegationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    task_id: str
+    project_id: str | None = None
+    repo: str
+    issue_number: int | None = None
+    status: str
+    branch: str | None = None
+    pr_url: str | None = None
+    pr_number: int | None = None
+    error: str | None = None
+    summary: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None = None
