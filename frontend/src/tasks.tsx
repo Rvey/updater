@@ -1,4 +1,6 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { apiBase, request as api, withProject } from "./lib/api";
+import { repositoryKey, uniqueRepositories } from "./lib/repositories";
+import { FormEvent, useEffect, useMemo, useState, useRef } from "react";
 import {
   CalendarClock,
   Check,
@@ -17,6 +19,9 @@ import {
   X,
 } from "lucide-react";
 import type {
+  GitHubLink,
+  GitHubRepo,
+  GitHubSyncResult,
   NewTask,
   Task,
   TaskPriority,
@@ -24,6 +29,7 @@ import type {
   TaskUpdate,
 } from "./types";
 import { Button } from "./components/ui/button";
+import { CardDelegationBadge, DelegateControl, canDelegateTask, onPrOpened, useLatestDelegation } from "./delegation";
 import {
   Kanban,
   KanbanBoard,
@@ -36,31 +42,6 @@ import {
 } from "./components/ui/kanban";
 import "./tasks.css";
 
-const apiBase = (import.meta as any).env.VITE_API_BASE_URL || "";
-
-async function api<T>(
-  path: string,
-  token: string,
-  options?: RequestInit,
-): Promise<T> {
-  const response = await fetch(apiBase + "/api" + path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: "Bearer " + token } : {}),
-      ...options?.headers,
-    },
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const error = new Error(
-      body.detail || "Request failed (" + response.status + ")",
-    ) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return response.json() as Promise<T>;
-}
 
 const STATUS_ORDER: TaskStatus[] = ["backlog", "in-progress", "review", "done"];
 
@@ -230,10 +211,12 @@ function StatusPill({ status }: { status: TaskStatus }) {
 
 function TaskCard({
   task,
+  token,
   isOverlay,
   onOpen,
 }: {
   task: Task;
+  token?: string;
   isOverlay?: boolean;
   onOpen?: () => void;
 }) {
@@ -264,6 +247,11 @@ function TaskCard({
           {task.tags.length > 3 && (
             <span className="tk-chip more">+{task.tags.length - 3}</span>
           )}
+        </div>
+      )}
+      {token && !isOverlay && canDelegateTask(task) && (
+        <div className="tk-card-tags">
+          <CardDelegationBadge token={token} task={task} />
         </div>
       )}
       <div className="tk-card-foot">
@@ -304,11 +292,13 @@ function TaskCard({
 function TaskColumn({
   status,
   tasks,
+  token,
   onOpen,
   onAdd,
 }: {
   status: TaskStatus;
   tasks: Task[];
+  token: string;
   onOpen: (task: Task) => void;
   onAdd: (status: TaskStatus) => void;
 }) {
@@ -334,7 +324,7 @@ function TaskColumn({
       </header>
       <KanbanColumnContent value={status} className="tk-col-body">
         {tasks.map((task) => (
-          <TaskCard key={task.id} task={task} onOpen={() => onOpen(task)} />
+          <TaskCard key={task.id} task={task} token={token} onOpen={() => onOpen(task)} />
         ))}
         {tasks.length === 0 && (
           <div className="tk-col-empty">
@@ -343,6 +333,179 @@ function TaskColumn({
         )}
       </KanbanColumnContent>
     </KanbanColumn>
+  );
+}
+
+function GitHubSyncModal({
+  close,
+  repos,
+  sync,
+  links,
+  unlink,
+}: {
+  close: () => void;
+  /** owner/name values from the workspace's Affinebot repo list. */
+  repos: string[];
+  sync: (value: {
+    repo: string;
+    state: string;
+    include_issues: boolean;
+    include_prs: boolean;
+    live: boolean;
+  }) => Promise<void>;
+  links: GitHubLink[];
+  unlink: (link: GitHubLink) => Promise<void>;
+}) {
+  const [form, setForm] = useState({
+    repo: repos[0] ?? "",
+    state: "open",
+    include_issues: true,
+    include_prs: true,
+    live: true,
+  });
+  const webhookUrl =
+    (apiBase || window.location.origin) + "/api/github/webhook";
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!form.include_issues && !form.include_prs) {
+      setError("Pick issues, pull requests, or both.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await sync({ ...form, repo: form.repo.trim() });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sync failed");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="tk-modal-backdrop" onMouseDown={close}>
+      <div
+        className="tk-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Import from GitHub"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="tk-modal-head">
+          <div>
+            <div className="tk-eyebrow">GITHUB IMPORT</div>
+            <h3>Import issues and pull requests</h3>
+          </div>
+          <button
+            type="button"
+            className="tk-icon-btn"
+            onClick={close}
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <form className="tk-form" onSubmit={submit}>
+          <label className="tk-field">
+            <span>Repository</span>
+            <input
+              required
+              list="tk-gh-repos"
+              value={form.repo}
+              placeholder="owner/name"
+              onChange={(e) => setForm({ ...form, repo: e.target.value })}
+            />
+            <datalist id="tk-gh-repos">
+              {repos.map((repo) => (
+                <option key={repo} value={repo} />
+              ))}
+            </datalist>
+          </label>
+          <div className="tk-grid-2">
+            <label className="tk-field">
+              <span>State</span>
+              <select
+                value={form.state}
+                onChange={(e) => setForm({ ...form, state: e.target.value })}
+              >
+                <option value="open">Open</option>
+                <option value="closed">Closed</option>
+                <option value="all">All</option>
+              </select>
+            </label>
+            <div className="tk-field">
+              <span>Include</span>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={form.include_issues}
+                  onChange={(e) =>
+                    setForm({ ...form, include_issues: e.target.checked })
+                  }
+                />{" "}
+                Issues
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={form.include_prs}
+                  onChange={(e) =>
+                    setForm({ ...form, include_prs: e.target.checked })
+                  }
+                />{" "}
+                Pull requests
+              </label>
+            </div>
+          </div>
+          <label>
+            <input
+              type="checkbox"
+              checked={form.live}
+              onChange={(e) => setForm({ ...form, live: e.target.checked })}
+            />{" "}
+            Keep synced live (GitHub pushes changes via webhook)
+          </label>
+          {form.live && (
+            <p className="tk-hint">
+              In your GitHub App (or the repo's Settings → Webhooks) set the
+              payload URL to <code>{webhookUrl}</code>, content type JSON, the
+              same secret as <code>GITHUB_WEBHOOK_SECRET</code>, and subscribe to
+              Issues and Pull requests.
+            </p>
+          )}
+          {links.length > 0 && (
+            <ul className="tk-hint">
+              {links.map((link) => (
+                <li key={link.id}>
+                  Live: {link.repo}
+                  {link.last_event_at
+                    ? " · last event " + dateLabel(link.last_event_at)
+                    : " · waiting for first event"}{" "}
+                  <button
+                    type="button"
+                    className="tk-btn"
+                    onClick={() => unlink(link)}
+                  >
+                    Stop
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {error && <div className="tk-form-error">{error}</div>}
+          <div className="tk-form-foot">
+            <button type="button" className="tk-btn" onClick={close}>
+              Cancel
+            </button>
+            <Button type="submit" className="button primary" disabled={busy}>
+              {busy ? "Importing…" : form.live ? "Import & sync live" : "Import"}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -562,8 +725,38 @@ function TaskModal({
   );
 }
 
+function DelegationSection({
+  token,
+  taskId,
+}: {
+  token: string;
+  taskId: string;
+}) {
+  const d = useLatestDelegation(token, taskId, true);
+  return (
+    <section className="tk-section">
+      <h3>Your coding agent</h3>
+      <DelegateControl token={token} taskId={taskId} />
+      {d?.status === "queued" && (
+        <p className="dg-hint">
+          Open your agent in <code>{d.repo}</code> and run <code>/updater-delegate</code>
+          {d.suggested_branch && (
+            <>
+              {" "}
+              (suggested branch <code>{d.suggested_branch}</code>)
+            </>
+          )}
+        </p>
+      )}
+      {d?.status === "failed" && d.error && <p className="dg-fail">{d.error}</p>}
+      {d?.status === "pr_opened" && d.summary && <p className="dg-summary">{d.summary}</p>}
+    </section>
+  );
+}
+
 function TaskDetail({
   task,
+  token,
   busy,
   onMove,
   onEdit,
@@ -571,6 +764,7 @@ function TaskDetail({
   onClose,
 }: {
   task: Task;
+  token: string;
   busy: string;
   onMove: (status: TaskStatus) => void;
   onEdit: () => void;
@@ -646,6 +840,10 @@ function TaskDetail({
             </span>
           )}
         </div>
+
+        {canDelegateTask(task) && (
+          <DelegationSection token={token} taskId={task.id} />
+        )}
 
         <section className="tk-section">
           <h3>Description</h3>
@@ -808,9 +1006,13 @@ function TaskDetail({
 export function TasksView({
   token,
   repos,
+  projectId = null,
+  workspaceId = null,
 }: {
   token: string;
   repos: string[];
+  projectId?: string | null;
+  workspaceId?: string | null;
 }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -824,6 +1026,9 @@ export function TasksView({
   const [busy, setBusy] = useState("");
   const [savingBoard, setSavingBoard] = useState(false);
   const [toast, setToast] = useState("");
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [links, setLinks] = useState<GitHubLink[]>([]);
+  const [ghRepos, setGhRepos] = useState<string[]>([]);
 
   useEffect(() => {
     if (!toast) return;
@@ -831,10 +1036,24 @@ export function TasksView({
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  const refreshTask = async (id: string) => {
+    try {
+      const fresh = await api<Task>("/tasks/" + id, token);
+      setTasks((current) => current.map((t) => (t.id === id ? fresh : t)));
+    } catch {
+      /* ignore; next full load will catch up */
+    }
+  };
+
+  const refreshRef = useRef(refreshTask);
+  refreshRef.current = refreshTask;
+  // A delegation that opened a PR moved its task to review on the server; mirror it on the board.
+  useEffect(() => onPrOpened((id) => void refreshRef.current(id)), []);
+
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const data = await api<Task[]>("/tasks", token);
+      const data = await api<Task[]>(withProject("/tasks", projectId), token);
       setTasks(data);
       setError("");
     } catch (err) {
@@ -847,25 +1066,21 @@ export function TasksView({
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, projectId]);
 
   const repoOptions = useMemo(
     () =>
-      Array.from(
-        new Set([
-          ...repos,
-          ...tasks
-            .map((task) => task.repo_url)
-            .filter((url): url is string => Boolean(url)),
-        ]),
-      ),
+      uniqueRepositories([
+        ...repos,
+        ...tasks.map((task) => task.repo_url).filter((url): url is string => Boolean(url)),
+      ]),
     [repos, tasks],
   );
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
     return tasks.filter((task) => {
-      if (repoFilter !== "all" && task.repo_url !== repoFilter) return false;
+      if (repoFilter !== "all" && repositoryKey(task.repo_url) !== repositoryKey(repoFilter)) return false;
       if (priorityFilter !== "all" && task.priority !== priorityFilter)
         return false;
       if (!q) return true;
@@ -930,7 +1145,7 @@ export function TasksView({
     try {
       const created = await api<Task>("/tasks", token, {
         method: "POST",
-        body: JSON.stringify(value),
+        body: JSON.stringify(projectId ? { ...value, project_id: projectId } : value),
       });
       setTasks((current) => [...current, created]);
       setSelectedId(created.id);
@@ -1029,6 +1244,21 @@ export function TasksView({
           )}
         </div>
         <div className="tk-head-actions">
+          <Button
+            className="button"
+            onClick={() => {
+              setSyncOpen(true);
+              api<GitHubLink[]>(withProject("/github/links", projectId), token)
+                .then(setLinks)
+                .catch(() => {});
+              if (workspaceId)
+                api<GitHubRepo[]>(`/workspaces/${workspaceId}/github/repos`, token)
+                  .then((list) => setGhRepos(list.map((r) => r.full_name)))
+                  .catch(() => setGhRepos([]));
+            }}
+          >
+            <Github size={15} /> Import from GitHub
+          </Button>
           <Button
             className="button primary"
             onClick={() => setModal({ mode: "create", status: "backlog" })}
@@ -1166,6 +1396,7 @@ export function TasksView({
                   key={status}
                   status={status}
                   tasks={columns[status]}
+                  token={token}
                   onOpen={(task) => setSelectedId(task.id)}
                   onAdd={(target) =>
                     setModal({ mode: "create", status: target })
@@ -1188,6 +1419,7 @@ export function TasksView({
         <TaskDetail
           key={selected.id}
           task={selected}
+          token={token}
           busy={busy}
           onMove={(status) => changeStatus(selected, status)}
           onEdit={() => setModal({ mode: "edit", task: selected })}
@@ -1205,6 +1437,36 @@ export function TasksView({
           save={(value) =>
             modal.mode === "edit" ? update(modal.task, value) : create(value)
           }
+        />
+      )}
+
+      {syncOpen && (
+        <GitHubSyncModal
+          close={() => setSyncOpen(false)}
+          repos={ghRepos}
+          links={links}
+          unlink={async (link) => {
+            await api("/github/links/" + link.id, token, { method: "DELETE" });
+            setLinks((current) => current.filter((l) => l.id !== link.id));
+          }}
+          sync={async ({ live, ...value }) => {
+            if (!projectId) throw new Error("Select a project first.");
+            const result = await api<GitHubSyncResult>("/github/sync", token, {
+              method: "POST",
+              body: JSON.stringify({ ...value, project_id: projectId }),
+            });
+            if (live) {
+              await api<GitHubLink>("/github/links", token, {
+                method: "POST",
+                body: JSON.stringify({ project_id: projectId, repo: value.repo }),
+              });
+            }
+            setSyncOpen(false);
+            setToast(
+              `Imported ${result.created} new, refreshed ${result.updated} from ${result.repo}`,
+            );
+            await load(true);
+          }}
         />
       )}
 

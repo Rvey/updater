@@ -1,0 +1,34 @@
+.dg-control { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.dg-control.compact .tk-btn { padding: 5px 9px; font-size: 12px; }
+.dg-card-slot { display: inline-flex; min-width: 0; }
+.dg-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--tk-border); background: var(--tk-hover); color: var(--tk-text-2);
+  font-size: 10.5px; font-weight: 700; border-radius: 20px; padding: 2px 8px; white-space: nowrap; text-decoration: none;
+}
+.dg-badge.running { color: var(--tk-accent); border-color: currentColor; }
+.dg-badge.pr { color: #2f9e44; border-color: currentColor; }
+.dg-badge.pr:hover { background: rgba(47, 158, 68, 0.1); }
+.dg-badge.failed { color: var(--tk-danger); border-color: currentColor; }
+.dg-badge.cancelled { color: var(--tk-muted); }
+.dg-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: dg-pulse 1.2s ease-in-out infinite; }
+@keyframes dg-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.7); } }
+.dg-error { color: var(--tk-danger); font-size: 12px; max-width: 320px; }
+.dg-primary { background: var(--tk-accent); border-color: var(--tk-accent); color: #fff; }
+.dg-primary:hover { background: var(--tk-accent); filter: brightness(1.08); }
+.dg-primary:disabled { opacity: 0.6; }
+.dg-backdrop { z-index: 80; }
+.dg-section-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.dg-summary { margin: 8px 0 0; font-size: 12.5px; color: var(--tk-text-2); }
+.dg-fail { margin: 8px 0 0; font-size: 12.5px; color: var(--tk-danger); }
+@media (prefers-reduced-motion: reduce) { .dg-dot { animation: none; } }
+
+.dg-explain { margin: 0; font-size: 12.5px; color: var(--tk-text-2); }
+.dg-how { font-size: 12.5px; color: var(--tk-text-2); }
+.dg-how summary { cursor: pointer; font-weight: 600; }
+.dg-how ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.dg-how code, .dg-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+  background: var(--tk-hover); border: 1px solid var(--tk-border); border-radius: 4px; padding: 1px 5px;
+}
+.dg-hint { margin: 8px 0 0; font-size: 12.5px; color: var(--tk-text-2); }

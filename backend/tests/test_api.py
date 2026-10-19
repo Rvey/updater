@@ -2,6 +2,8 @@ from collections.abc import Generator
 from datetime import datetime, timezone
 import json
 
+import httpx
+
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -10,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 from app import main
 from app import mcp_server
 from app import backfill_ownership
+from app import workspaces
 from app.db import Base
 from app.db import Note
 from app.db import Update
@@ -155,7 +158,7 @@ def test_http_mcp_lists_feature_tools(monkeypatch) -> None:
         assert tools.status_code == 200, tools.text
         assert {tool["name"] for tool in tools.json()["result"]["tools"]} == {
             "publish_feature", "list_feature_updates", "get_feature_update", "add_feature_impact", "list_context_requests", "claim_context_request", "fulfill_context_request",
-            "report_tech_debt", "list_tech_debt", "get_tech_debt", "update_tech_debt",
+            "list_delegations", "claim_delegation", "report_delegation", "report_tech_debt", "list_tech_debt", "get_tech_debt", "update_tech_debt", "list_projects",
         }
 def test_agent_proxy_context_flow(tmp_path) -> None:
     test_engine = create_engine(f"sqlite:///{tmp_path / 'proxy.sqlite3'}", connect_args={"check_same_thread": False})
@@ -710,11 +713,13 @@ def test_backfill_adopts_unowned_rows_and_undo_is_precise(tmp_path, monkeypatch)
         db.add(Note(user_id=None, title="Legacy note"))
         db.commit()
 
-    # Before adopting, both accounts see every unowned row: the fix changes nobody's view.
+    # Accounts only reach rows inside their projects. Alpha owns one; the three legacy rows are
+    # invisible to accounts (until adopted) but the env token / open preview still sees all four.
     with session_factory() as db:
-        for owner in (None, alpha_id):
-            seen = len(db.scalars(select(Update).where(main._ownership_clause(Update, owner))).all())
-            assert seen == 4, seen
+        assert len(db.scalars(select(Update).where(workspaces.project_clause(Update, None))).all()) == 4
+        assert {u.title for u in db.scalars(select(Update).where(workspaces.project_clause(Update, alpha_id))).all()} == {"Alpha own"}
+        assert db.scalars(select(Update).where(workspaces.project_clause(Update, beta_id))).all() == []
+        alpha_project = workspaces.default_project_for(db, alpha_id).id
 
     # Adopt only alpha's two repos, leaving the unrelated row and the unowned note alone.
     run_id = "test-run"
@@ -727,9 +732,11 @@ def test_backfill_adopts_unowned_rows_and_undo_is_precise(tmp_path, monkeypatch)
         assert adopted == {"Legacy A", "Legacy B", "Alpha own"}, adopted
         still_unowned = {u.title for u in db.scalars(select(Update).where(Update.user_id.is_(None))).all()}
         assert still_unowned == {"Legacy other"}, still_unowned
-        # Beta's view is unchanged: the unrelated legacy row is still visible to it.
-        beta_view = {u.title for u in db.scalars(select(Update).where(main._ownership_clause(Update, beta_id))).all()}
-        assert beta_view == {"Legacy other"}, beta_view
+        # Adopted rows are stamped with alpha's default project and visible to alpha only.
+        assert {u.project_id for u in db.scalars(select(Update).where(Update.title.in_(['Legacy A', 'Legacy B']))).all()} == {alpha_project}
+        alpha_view = {u.title for u in db.scalars(select(Update).where(workspaces.project_clause(Update, alpha_id))).all()}
+        assert alpha_view == {"Legacy A", "Legacy B", "Alpha own"}, alpha_view
+        assert db.scalars(select(Update).where(workspaces.project_clause(Update, beta_id))).all() == []
 
     # Undo returns exactly the two adopted legacy rows, never alpha's pre-existing one.
     monkeypatch.setattr("sys.argv", ["backfill", "--undo", "--run-id", run_id])
@@ -739,4 +746,26 @@ def test_backfill_adopts_unowned_rows_and_undo_is_precise(tmp_path, monkeypatch)
         assert owned == {"Alpha own"}, owned
         unowned = {u.title for u in db.scalars(select(Update).where(Update.user_id.is_(None))).all()}
         assert unowned == {"Legacy A", "Legacy B", "Legacy other"}, unowned
+        assert {u.title for u in db.scalars(select(Update).where(Update.project_id.is_(None), Update.user_id.is_(None))).all()} == {"Legacy A", "Legacy B", "Legacy other"}
     test_engine.dispose()
+
+
+def test_repository_filter_combines_remote_spellings_and_agents(tmp_path) -> None:
+    test_engine = create_engine(f"sqlite:///{tmp_path / 'repos.sqlite3'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(test_engine)
+    client = _signed_in_client(test_engine)
+    try:
+        with client:
+            key = _register_account(client, "repo-owner@example.com")
+            headers = {"Authorization": f"Bearer {key}"}
+            for agent, repo in [("codex", "https://github.com/example/repo"), ("claude", "https://github.com/example/repo.git/")]:
+                result = client.post("/api/tasks", headers=headers, json={"title": f"Task from {agent}", "repo_url": repo, "author_agent": agent})
+                assert result.status_code == 201, result.text
+            for remote in ["https://github.com/example/repo", "git@github.com:example/repo.git", "ssh://git@github.com/example/repo.git", "http://github.com/example/repo/"]:
+                response = client.get("/api/tasks", headers=headers, params={"repo": remote})
+                assert response.status_code == 200, response.text
+                assert len(response.json()) == 2
+            assert client.get("/api/tasks", headers=headers, params={"repo": "https://github.com/other/repo"}).json() == []
+    finally:
+        main.app.dependency_overrides.clear()
+        test_engine.dispose()

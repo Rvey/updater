@@ -1,9 +1,11 @@
+import { ApiError, apiBase, createApi, request as api } from "./lib/api";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Bot,
   Check,
   CircleAlert,
   Copy,
+  Link2,
   KeyRound,
   LockKeyhole,
   Mail,
@@ -13,35 +15,10 @@ import {
   UserRound,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { Update } from "./types";
+import type { AffinebotLink, Update, Workspace } from "./types";
 import { Button } from "./components/ui/button";
 import "./settings.css";
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || "";
-
-async function api<T>(
-  path: string,
-  token: string,
-  options?: RequestInit,
-): Promise<T> {
-  const response = await fetch(apiBase + "/api" + path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options?.headers,
-    },
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const error = new Error(
-      body.detail || `Request failed (${response.status})`,
-    ) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return response.json() as Promise<T>;
-}
 
 async function copyText(value: string): Promise<boolean> {
   try {
@@ -80,7 +57,7 @@ function shortDate(value: string) {
   }
 }
 
-export type SettingsSection = "keys" | "account" | "agents";
+export type SettingsSection = "keys" | "account" | "agents" | "integrations";
 
 type ApiKeyInfo = {
   id: string;
@@ -100,6 +77,7 @@ const SECTIONS: {
   { id: "keys", label: "API keys", hint: "Credentials for your agents", icon: KeyRound },
   { id: "account", label: "Account", hint: "Email and password", icon: UserRound },
   { id: "agents", label: "Connected agents", hint: "MCP setup for each agent", icon: Bot },
+  { id: "integrations", label: "Integrations", hint: "Affinebot link for this workspace", icon: Link2 },
 ];
 
 function CopyChip({ value, label }: { value: string; label: string }) {
@@ -674,10 +652,275 @@ function ConnectedAgentsSection({ token, updates }: { token: string; updates: Up
   );
 }
 
+function affinebotMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.detail === "affinebot_unreachable")
+      return "Could not reach Affinebot. Check the base URL and that the server is running.";
+    if (err.detail === "affinebot_rejected")
+      return "Affinebot rejected the client id or secret. Ask the operator to mint a new client.";
+    if (err.status === 403) return "Only workspace owners can change the Affinebot link.";
+    return err.message;
+  }
+  return err instanceof Error ? err.message : "Request failed.";
+}
+
+function relativeTime(value: string | null): string {
+  if (!value) return "never";
+  const then = new Date(value).getTime();
+  if (Number.isNaN(then)) return value;
+  const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return Math.floor(seconds / 60) + " min ago";
+  if (seconds < 86400) return Math.floor(seconds / 3600) + " h ago";
+  return Math.floor(seconds / 86400) + " d ago";
+}
+
+function AffinebotCard({ token, workspace }: { token: string; workspace: Workspace | null }) {
+  const workspaceId = workspace?.id ?? null;
+  const isOwner = workspace?.role === "owner";
+  const [link, setLink] = useState<AffinebotLink | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [baseUrl, setBaseUrl] = useState("");
+  const [clientId, setClientId] = useState(workspaceId || "");
+  const [secret, setSecret] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  useEffect(() => {
+    setLink(null);
+    setLoaded(false);
+    setError("");
+    setSuccess("");
+    setSecret("");
+    setClientId(workspaceId || "");
+    if (!workspaceId) return;
+    let cancelled = false;
+    createApi(token)
+      .get<AffinebotLink>(`/workspaces/${workspaceId}/affinebot`)
+      .then((res) => {
+        if (cancelled) return;
+        setLink(res);
+        setBaseUrl(res.base_url);
+        setClientId(res.client_id);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (!(err instanceof ApiError && err.status === 404)) setError(affinebotMessage(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, workspaceId]);
+
+  if (!workspace) {
+    return (
+      <section className="settings-card" aria-labelledby="settings-affinebot-title">
+        <CardHead icon={Link2} title="Affinebot" description="Select a workspace to manage its Affinebot link." />
+      </section>
+    );
+  }
+
+  const save = (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    if (!baseUrl.trim() || !clientId.trim() || !secret) {
+      setError("Base URL, client id and secret are all required.");
+      return;
+    }
+    setBusy(true);
+    api<AffinebotLink>(`/workspaces/${workspace.id}/affinebot`, token, {
+      method: "PUT",
+      body: JSON.stringify({ base_url: baseUrl.trim(), client_id: clientId.trim(), secret }),
+    })
+      .then((res) => {
+        setLink(res);
+        setSuccess(res.status === "active" ? "Connected." : "Saved.");
+      })
+      .catch((err) => setError(affinebotMessage(err)))
+      .finally(() => {
+        setSecret("");
+        setBusy(false);
+      });
+  };
+
+  const check = () => {
+    setError("");
+    setSuccess("");
+    setBusy(true);
+    createApi(token)
+      .post<AffinebotLink>(`/workspaces/${workspace.id}/affinebot/check`)
+      .then((res) => {
+        setLink(res);
+        setSuccess(res.status === "active" ? "Connection is healthy." : "Checked.");
+      })
+      .catch((err) => setError(affinebotMessage(err)))
+      .finally(() => setBusy(false));
+  };
+
+  const disconnect = () => {
+    if (!window.confirm("Disconnect Affinebot from this workspace?")) return;
+    setError("");
+    setSuccess("");
+    setBusy(true);
+    createApi(token)
+      .del(`/workspaces/${workspace.id}/affinebot`)
+      .then(() => {
+        setLink(null);
+        setBaseUrl("");
+        setClientId(workspace.id);
+        setSuccess("Disconnected.");
+      })
+      .catch((err) => setError(affinebotMessage(err)))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <section className="settings-card" aria-labelledby="settings-affinebot-title">
+      <CardHead
+        icon={Link2}
+        title="Affinebot"
+        description={`Link "${workspace.name}" to an Affinebot instance to browse GitHub repos and delegate work.`}
+      />
+      {!loaded ? (
+        <p className="settings-hint">Loading…</p>
+      ) : (
+        <>
+          {link ? (
+            <dl className="settings-affinebot-meta">
+              <div>
+                <dt>Status</dt>
+                <dd>
+                  <span className={"settings-key-badge " + link.status}>{link.status}</span>
+                </dd>
+              </div>
+              <div>
+                <dt>Base URL</dt>
+                <dd>{link.base_url}</dd>
+              </div>
+              <div>
+                <dt>Client id</dt>
+                <dd>{link.client_id}</dd>
+              </div>
+              <div>
+                <dt>GitHub owner</dt>
+                <dd>{link.github_owner || "—"}</dd>
+              </div>
+              <div>
+                <dt>Installation id</dt>
+                <dd>{link.installation_id ?? "—"}</dd>
+              </div>
+              <div>
+                <dt>Last checked</dt>
+                <dd>{relativeTime(link.last_checked_at)}</dd>
+              </div>
+              {link.last_error && (
+                <div>
+                  <dt>Last error</dt>
+                  <dd>{link.last_error}</dd>
+                </div>
+              )}
+            </dl>
+          ) : (
+            <div className="settings-note">
+              <ShieldCheck size={16} />
+              <span>
+                Not linked. Ask the Affinebot operator to mint a client with
+                POST /link/admin/clients using this workspace id as the client id.
+                {!isOwner && " Only a workspace owner can save the link."}
+              </span>
+            </div>
+          )}
+          {!link && (
+            <div className="settings-url-row">
+              <input readOnly value={workspace.id} aria-label="Workspace id" />
+              <CopyChip value={workspace.id} label="workspace id" />
+            </div>
+          )}
+          {isOwner && (
+            <form onSubmit={save}>
+              <div className="settings-form-grid">
+                <label className="settings-field full">
+                  <span>Base URL</span>
+                  <input
+                    type="url"
+                    value={baseUrl}
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    placeholder="https://affinebot.example.com"
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>Client id</span>
+                  <input
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>
+                    <KeyRound size={13} /> Secret
+                  </span>
+                  <input
+                    type="password"
+                    value={secret}
+                    onChange={(e) => setSecret(e.target.value)}
+                    autoComplete="off"
+                    placeholder="abl_…"
+                  />
+                </label>
+              </div>
+              <div className="settings-actions">
+                <Button type="submit" className="button primary" disabled={busy}>
+                  {busy ? "Working…" : link ? "Update link" : "Connect"}
+                </Button>
+                {link && (
+                  <Button type="button" className="button" variant="outline" disabled={busy} onClick={check}>
+                    <RefreshCw size={14} /> Check connection
+                  </Button>
+                )}
+                {link && (
+                  <Button type="button" className="button" variant="destructive" disabled={busy} onClick={disconnect}>
+                    Disconnect
+                  </Button>
+                )}
+              </div>
+            </form>
+          )}
+          {!isOwner && link && (
+            <div className="settings-actions">
+              <Button type="button" className="button" disabled={busy} onClick={check}>
+                <RefreshCw size={14} /> Check connection
+              </Button>
+              <span className="settings-hint">Only owners can change or remove the link.</span>
+            </div>
+          )}
+          {success && (
+            <div className="settings-feedback ok">
+              <Check size={14} /> {success}
+            </div>
+          )}
+          {error && (
+            <div className="settings-feedback error">
+              <CircleAlert size={14} /> {error}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 export function SettingsView({
   token,
   email,
   updates,
+  workspace,
   section,
   onSectionChange,
   onEmailChange,
@@ -685,6 +928,7 @@ export function SettingsView({
   token: string;
   email: string | null;
   updates: Update[];
+  workspace: Workspace | null;
   section: SettingsSection;
   onSectionChange: (section: SettingsSection) => void;
   onEmailChange: (email: string) => void;
@@ -728,6 +972,7 @@ export function SettingsView({
             <AccountSection token={token} email={email} onEmailChange={onEmailChange} />
           )}
           {section === "agents" && <ConnectedAgentsSection token={token} updates={updates} />}
+          {section === "integrations" && <AffinebotCard token={token} workspace={workspace} />}
         </div>
       </div>
     </div>

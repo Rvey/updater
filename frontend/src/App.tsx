@@ -1,7 +1,10 @@
+import { createApi, request, withProject } from "./lib/api";
+import { repositoryKey, uniqueRepositories } from "./lib/repositories";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  Github as GithubIcon,
   ArrowDownRight,
   ArrowLeft,
   ArrowRight,
@@ -24,6 +27,8 @@ import {
   Menu,
   MessageCircle,
   Moon,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   Search,
   Settings2,
@@ -31,42 +36,29 @@ import {
   SquareKanban,
   StickyNote,
   Sun,
+  Users,
   X,
 } from "lucide-react";
-import type { ImpactNote, NewUpdate, Question, Update } from "./types";
+import type { ImpactNote, NewUpdate, Question, Update, Workspace } from "./types";
 import { NotesView } from "./notes";
 import { TasksView } from "./tasks";
+import { GitHubView } from "./github";
 import { TechDebtView } from "./techdebt";
+import {
+  INVITE_STORAGE_KEY,
+  MembersPage,
+  PROJECT_STORAGE_KEY,
+  WORKSPACE_STORAGE_KEY,
+  WorkspaceSwitcher,
+  errorText,
+  readStored,
+  writeStored,
+} from "./workspaces";
 import { SettingsView } from "./settings";
 import type { SettingsSection } from "./settings";
 import { Button } from "./components/ui/button";
 import Homepage from "./marketing/Homepage";
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || "";
-
-async function request<T>(
-  path: string,
-  token: string,
-  options?: RequestInit,
-): Promise<T> {
-  const response = await fetch(`${apiBase}/api${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options?.headers,
-    },
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const error = new Error(
-      body.detail || `Request failed (${response.status})`,
-    ) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return response.json() as Promise<T>;
-}
 
 function repoName(url: string) {
   try {
@@ -109,11 +101,15 @@ function initials(name: string) {
 
 const UPDATES_BATCH_SIZE = 500;
 
-async function loadAllUpdates(token: string, signal?: AbortSignal): Promise<Update[]> {
+async function loadAllUpdates(
+  token: string,
+  signal?: AbortSignal,
+  projectId: string | null = null,
+): Promise<Update[]> {
   const updates: Update[] = [];
   for (let offset = 0; ; offset += UPDATES_BATCH_SIZE) {
     const batch = await request<Update[]>(
-      `/updates?limit=${UPDATES_BATCH_SIZE}&offset=${offset}`,
+      withProject(`/updates?limit=${UPDATES_BATCH_SIZE}&offset=${offset}`, projectId),
       token,
       { signal },
     );
@@ -1046,11 +1042,19 @@ function WorkspaceApp() {
   const [authPassword, setAuthPassword] = useState("");
   const [accountEmail, setAccountEmail] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("keys");
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(() =>
+    readStored(WORKSPACE_STORAGE_KEY),
+  );
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(() =>
+    readStored(PROJECT_STORAGE_KEY),
+  );
+  const [workspaceNotice, setWorkspaceNotice] = useState("");
   const [updates, setUpdates] = useState<Update[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [repo, setRepo] = useState("All updates");
-  const [view, setView] = useState<"updates" | "questions" | "notes" | "tasks" | "tech-debt" | "settings">("updates");
+  const [view, setView] = useState<"updates" | "questions" | "notes" | "tasks" | "tech-debt" | "github" | "settings" | "members">("updates");
   const [loading, setLoading] = useState(true);
   const [unauthorized, setUnauthorized] = useState(false);
   const [error, setError] = useState("");
@@ -1058,6 +1062,28 @@ function WorkspaceApp() {
   const [saving, setSaving] = useState(false);
   const [mobileDetail, setMobileDetail] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
+  const [contextHidden, setContextHidden] = useState(() => {
+    try {
+      return localStorage.getItem("updater-context-hidden") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("updater-context-hidden", contextHidden ? "1" : "0");
+    } catch {
+      /* storage unavailable; the toggle still works for this visit */
+    }
+  }, [contextHidden]);
+  useEffect(() => {
+    if (!mobileNav) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileNav(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobileNav]);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     try {
       const saved = localStorage.getItem("updater-theme");
@@ -1079,11 +1105,14 @@ function WorkspaceApp() {
     }
   }, [theme]);
 
+  const feedWorkspaceId =
+    workspaces.find((item) => item.id === activeWorkspaceId)?.id || workspaces[0]?.id || null;
+
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
     setLoading(true);
-    loadAllUpdates(token, controller.signal)
+    loadAllUpdates(token, controller.signal, activeProjectId)
       .then((items) => {
         if (cancelled) return;
         setUpdates(items);
@@ -1108,7 +1137,7 @@ function WorkspaceApp() {
       cancelled = true;
       controller.abort();
     };
-  }, [token]);
+  }, [token, activeProjectId, feedWorkspaceId]);
 
   useEffect(() => {
     if (!token) {
@@ -1124,7 +1153,7 @@ function WorkspaceApp() {
     // Refresh the ship log when "Connected agents" opens so the agent list is current.
     if (!token || view !== "settings" || settingsSection !== "agents") return;
     let cancelled = false;
-    loadAllUpdates(token)
+    loadAllUpdates(token, undefined, activeProjectId)
       .then((items) => {
         if (!cancelled) setUpdates(items);
       })
@@ -1134,16 +1163,16 @@ function WorkspaceApp() {
     return () => {
       cancelled = true;
     };
-  }, [token, view, settingsSection]);
+  }, [token, view, settingsSection, activeProjectId]);
 
   const repositories = useMemo(
-    () => [...new Set(updates.map((item) => item.repo_url))],
+    () => uniqueRepositories(updates.map((item) => item.repo_url)),
     [updates],
   );
   const filtered = useMemo(
     () =>
       updates.filter((item) => {
-        const matchesRepo = repo === "All updates" || item.repo_url === repo;
+        const matchesRepo = repo === "All updates" || repositoryKey(item.repo_url) === repositoryKey(repo);
         const matchesSearch = updateSearchText(item).includes(search.toLowerCase().trim());
         const matchesView = view === "updates" || item.questions.length > 0;
         return matchesRepo && matchesSearch && matchesView;
@@ -1162,7 +1191,7 @@ function WorkspaceApp() {
     try {
       const item = await request<Update>("/updates", token, {
         method: "POST",
-        body: JSON.stringify(value),
+        body: JSON.stringify(activeProjectId ? { ...value, project_id: activeProjectId } : value),
       });
       setUpdates((current) => [item, ...current]);
       setSelectedId(item.id);
@@ -1207,8 +1236,124 @@ function WorkspaceApp() {
   };
 
 
+  const activeWorkspace =
+    workspaces.find((item) => item.id === activeWorkspaceId) || workspaces[0] || null;
+
+  const refreshWorkspaces = async (preferWorkspaceId?: string): Promise<Workspace[]> => {
+    try {
+      const list = await createApi(token).get<Workspace[]>("/workspaces");
+      setWorkspaces(list);
+      const nextWorkspace =
+        list.find((item) => item.id === (preferWorkspaceId || activeWorkspaceId)) || list[0] || null;
+      setActiveWorkspaceId(nextWorkspace?.id ?? null);
+      writeStored(WORKSPACE_STORAGE_KEY, nextWorkspace?.id ?? null);
+      if (
+        activeProjectId &&
+        !nextWorkspace?.projects.some((project) => project.id === activeProjectId)
+      ) {
+        setActiveProjectId(null);
+        writeStored(PROJECT_STORAGE_KEY, null);
+      }
+      return list;
+    } catch {
+      // The env token / open preview has no workspaces (403): run without a switcher.
+      setWorkspaces([]);
+      return [];
+    }
+  };
+
+  const selectWorkspace = (id: string) => {
+    setActiveWorkspaceId(id);
+    writeStored(WORKSPACE_STORAGE_KEY, id);
+    setActiveProjectId(null);
+    writeStored(PROJECT_STORAGE_KEY, null);
+    if (view === "members") return;
+    setRepo("All updates");
+  };
+  const selectProject = (id: string | null) => {
+    setActiveProjectId(id);
+    writeStored(PROJECT_STORAGE_KEY, id);
+    setRepo("All updates");
+    setMobileDetail(false);
+  };
+  const openMembers = () => {
+    setView("members");
+    setMobileNav(false);
+    setMobileDetail(false);
+  };
+  const createWorkspace = async (name: string) => {
+    const created = await createApi(token).post<{ id: string }>("/workspaces", { name });
+    await refreshWorkspaces(created.id);
+    setActiveProjectId(null);
+    writeStored(PROJECT_STORAGE_KEY, null);
+  };
+  const createProject = async (name: string, repoUrl: string) => {
+    if (!activeWorkspace) return;
+    const created = await createApi(token).post<{ id: string }>(
+      `/workspaces/${activeWorkspace.id}/projects`,
+      repoUrl ? { name, repo_url: repoUrl } : { name },
+    );
+    await refreshWorkspaces(activeWorkspace.id);
+    selectProject(created.id);
+  };
+
+  useEffect(() => {
+    // Capture ?invite=<token> once, keep it until a signed-in account can accept it.
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const invite = params.get("invite");
+      if (invite) {
+        writeStored(INVITE_STORAGE_KEY, invite);
+        params.delete("invite");
+        const query = params.toString();
+        window.history.replaceState(
+          null,
+          "",
+          window.location.pathname + (query ? "?" + query : "") + window.location.hash,
+        );
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!token || !accountEmail) {
+      setWorkspaces([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const invite = readStored(INVITE_STORAGE_KEY);
+      let accepted: string | undefined;
+      if (invite) {
+        try {
+          const result = await createApi(token).post<{ workspace_id: string }>(
+            "/invites/accept",
+            { token: invite },
+          );
+          accepted = result.workspace_id;
+          if (!cancelled) setWorkspaceNotice("Invite accepted.");
+        } catch (err) {
+          if (!cancelled) setWorkspaceNotice(errorText(err, "Could not accept the invite."));
+        }
+        writeStored(INVITE_STORAGE_KEY, null);
+      }
+      if (cancelled) return;
+      if (accepted) {
+        setActiveProjectId(null);
+        writeStored(PROJECT_STORAGE_KEY, null);
+      }
+      await refreshWorkspaces(accepted);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, accountEmail]);
+
   const openWithToken = (value: string) => {
-    loadAllUpdates(value)
+    loadAllUpdates(value, undefined, activeProjectId)
       .then((items) => {
         sessionStorage.setItem("updater-token", value);
         setUpdates(items);
@@ -1235,6 +1380,13 @@ function WorkspaceApp() {
   const signOut = () => {
     const current = token;
     sessionStorage.removeItem("updater-token");
+    writeStored(WORKSPACE_STORAGE_KEY, null);
+    writeStored(PROJECT_STORAGE_KEY, null);
+    writeStored(INVITE_STORAGE_KEY, null);
+    setWorkspaces([]);
+    setActiveWorkspaceId(null);
+    setActiveProjectId(null);
+    setWorkspaceNotice("");
     setToken("");
     setDraftToken("");
     setAccountEmail(null);
@@ -1350,9 +1502,24 @@ function WorkspaceApp() {
             <X size={18} />
           </button>
         </div>
-        <div className="workspace-label">
-          WORKSPACE <ChevronDown size={13} />
-        </div>
+        {workspaces.length ? (
+          <WorkspaceSwitcher
+            workspaces={workspaces}
+            activeWorkspaceId={activeWorkspace?.id ?? null}
+            activeProjectId={activeProjectId}
+            notice={workspaceNotice}
+            onSelectWorkspace={selectWorkspace}
+            onSelectProject={selectProject}
+            onCreateWorkspace={createWorkspace}
+            onCreateProject={createProject}
+            onOpenMembers={openMembers}
+          />
+        ) : (
+          <div className="workspace-label">
+            WORKSPACE <ChevronDown size={13} />
+          </div>
+        )}
+        <div className="sidebar-scroll">
         <nav className="primary-nav" aria-label="Main navigation">
           <button
             className={
@@ -1409,6 +1576,16 @@ function WorkspaceApp() {
           >
             <AlertTriangle size={17} /> Tech debt
           </button>
+          <button
+            className={view === "github" ? "active" : ""}
+            onClick={() => {
+              setView("github");
+              setMobileNav(false);
+              setMobileDetail(false);
+            }}
+          >
+            <GithubIcon size={17} /> GitHub
+          </button>
         </nav>
         <div className="sidebar-section-heading">
           <span>REPOSITORIES</span>
@@ -1429,8 +1606,17 @@ function WorkspaceApp() {
             <p className="no-repos">Your repos will appear here.</p>
           )}
         </nav>
+        </div>
         <div className="sidebar-bottom">
           <div className="sidebar-rule" />
+          {activeWorkspace && (
+            <button
+              className={view === "members" ? "active" : ""}
+              onClick={openMembers}
+            >
+              <Users size={17} /> Members
+            </button>
+          )}
           <button
             className={view === "settings" ? "active" : ""}
             onClick={() => openSettings("keys")}
@@ -1445,6 +1631,9 @@ function WorkspaceApp() {
           </div>
         </div>
       </aside>
+      {mobileNav && (
+        <div className="sidebar-backdrop" onClick={() => setMobileNav(false)} aria-hidden="true" />
+      )}
       <main className={`workspace ${mobileDetail ? "show-mobile-detail" : ""}`}>
         <header className="topbar">
           <button
@@ -1457,12 +1646,16 @@ function WorkspaceApp() {
           <div className="breadcrumbs">
             WORKSPACE <ChevronRight size={14} />{" "}
             <strong>
-              {view === "notes"
+              {view === "members"
+                ? "Members"
+                : view === "notes"
                 ? "Notes"
                 : view === "tasks"
                   ? "Tasks"
                   : view === "settings"
                     ? "Settings"
+                    : view === "github"
+                      ? "GitHub"
                     : view === "tech-debt"
                       ? "Tech debt"
                       : view === "questions"
@@ -1480,6 +1673,17 @@ function WorkspaceApp() {
                 day: "numeric",
               })}
             </span>
+            {(view === "updates" || view === "questions") && (
+              <button
+                className="icon-button context-toggle"
+                onClick={() => setContextHidden((value) => !value)}
+                aria-pressed={!contextHidden}
+                aria-label={contextHidden ? "Show context panel" : "Hide context panel"}
+                title={contextHidden ? "Show context panel" : "Hide context panel"}
+              >
+                {contextHidden ? <PanelRightOpen size={17} /> : <PanelRightClose size={17} />}
+              </button>
+            )}
             <button
               className="icon-button theme-toggle"
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -1488,21 +1692,41 @@ function WorkspaceApp() {
             >
               {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
             </button>
-            <div className="avatar">U</div>
+            <div className="avatar">{(accountEmail?.[0] || "U").toUpperCase()}</div>
           </div>
         </header>
-        <div className="workspace-body">
-          {view === "notes" ? (
-            <NotesView token={token} repos={repositories} />
+        <div className={`workspace-body ${contextHidden ? "context-hidden" : ""}`}>
+          {view === "members" && activeWorkspace ? (
+            <MembersPage
+              token={token}
+              workspace={activeWorkspace}
+              email={accountEmail}
+              onChanged={() => void refreshWorkspaces()}
+              onLeft={() => {
+                setView("updates");
+                void refreshWorkspaces();
+              }}
+            />
+          ) : view === "notes" ? (
+            <NotesView token={token} repos={repositories} projectId={activeProjectId} />
           ) : view === "tasks" ? (
-            <TasksView token={token} repos={repositories} />
+            <TasksView token={token} repos={repositories} projectId={activeProjectId} workspaceId={activeWorkspace?.id ?? null} />
+          ) : view === "github" ? (
+            <GitHubView
+              token={token}
+              workspaceId={activeWorkspace?.id ?? null}
+              projectId={activeProjectId}
+              onOpenSettings={() => openSettings("integrations")}
+              onOpenTask={() => setView("tasks")}
+            />
           ) : view === "tech-debt" ? (
-            <TechDebtView token={token} repos={repositories} />
+            <TechDebtView token={token} repos={repositories} projectId={activeProjectId} />
           ) : view === "settings" ? (
             <SettingsView
               token={token}
               email={accountEmail}
               updates={updates}
+              workspace={activeWorkspace}
               section={settingsSection}
               onSectionChange={setSettingsSection}
               onEmailChange={setAccountEmail}
@@ -1588,6 +1812,7 @@ function WorkspaceApp() {
                     onClick={() => {
                       setSelectedId(item.id);
                       setMobileDetail(true);
+                      setContextHidden(false);
                     }}
                   >
                     <div className="row-top">
@@ -1685,6 +1910,7 @@ function isWorkspacePath(): boolean {
     if (path === "/app" || path.startsWith("/app/")) return true;
     if (path === "/workspace" || path.startsWith("/workspace/")) return true;
     const params = new URLSearchParams(window.location.search);
+    if (params.has("invite")) return true;
     if (params.get("view") === "workspace" || params.get("view") === "app") return true;
     if (window.location.hash === "#/app" || window.location.hash.startsWith("#/workspace")) return true;
     return false;

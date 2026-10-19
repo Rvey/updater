@@ -61,6 +61,7 @@ export type NotePriority = "none" | "low" | "medium" | "high";
 
 export type Note = {
   id: string;
+  project_id?: string | null;
   title: string;
   content: string;
   color: NoteColor;
@@ -82,6 +83,7 @@ export type Note = {
 
 export type Update = {
   id: string;
+  project_id?: string | null;
   external_id: string | null;
   title: string;
   summary: string;
@@ -122,6 +124,7 @@ export type TechDebtStatus = "open" | "in-progress" | "resolved" | "wont-fix";
 
 export type TechDebt = {
   id: string;
+  project_id?: string | null;
   title: string;
   scope: string;
   description: string;
@@ -160,6 +163,7 @@ export type TaskPriority = "low" | "medium" | "high";
 
 export type Task = {
   id: string;
+  project_id?: string | null;
   title: string;
   description: string;
   status: TaskStatus;
@@ -171,9 +175,89 @@ export type Task = {
   assignee: string | null;
   due_date: string | null;
   author_agent: string | null;
+  external_id?: string | null;
+  external_url?: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+};
+
+export type DelegationStatus =
+  | "queued"
+  | "running"
+  | "pr_opened"
+  | "failed"
+  | "cancelled";
+
+export type Delegation = {
+  id: string;
+  task_id: string;
+  project_id: string | null;
+  repo: string;
+  issue_number: number | null;
+  status: DelegationStatus;
+  branch: string | null;
+  pr_url: string | null;
+  pr_number: number | null;
+  error: string | null;
+  summary: string | null;
+  claimed_by: string | null;
+  claimed_at: string | null;
+  task_title: string;
+  task_description: string | null;
+  issue_url: string | null;
+  suggested_branch: string | null;
+  instruction: string | null;
+  base_branch: string | null;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+};
+
+export type GitHubSyncResult = {
+  repo: string;
+  created: number;
+  updated: number;
+  total: number;
+  truncated?: boolean;
+};
+
+export type GitHubRepo = {
+  full_name: string;
+  private: boolean;
+  default_branch: string;
+  linked: boolean;
+  project_id: string | null;
+};
+
+export type GitHubItem = {
+  number: number;
+  title: string;
+  body: string;
+  state: string;
+  merged: boolean;
+  draft: boolean;
+  url: string;
+  author: string | null;
+  assignees: string[];
+  labels: string[];
+  comments: number;
+  is_pr: boolean;
+  updated_at: string;
+  branch: string | null;
+  task_id: string | null;
+};
+
+export type GitHubItemsPage = {
+  items: GitHubItem[];
+  next_page: number | null;
+};
+
+export type GitHubLink = {
+  id: string;
+  repo: string;
+  created_at: string;
+  last_event_at: string | null;
 };
 
 export type NewTask = Pick<Task, "title"> & {
@@ -201,3 +285,50 @@ export type TaskUpdate = Partial<
     | "due_date"
   >
 >;
+
+export type WorkspaceRole = "owner" | "member";
+
+export type WorkspaceProject = {
+  id: string;
+  name: string;
+  slug: string;
+  repo_url: string | null;
+  is_default: boolean;
+};
+
+export type Workspace = {
+  id: string;
+  name: string;
+  slug: string;
+  role: WorkspaceRole;
+  projects: WorkspaceProject[];
+};
+
+export type Member = {
+  user_id: string;
+  email: string;
+  role: WorkspaceRole;
+  created_at: string;
+};
+
+export type Invite = {
+  id: string;
+  email: string;
+  role: WorkspaceRole;
+  expires_at: string;
+  created_at?: string;
+  token?: string;
+};
+
+export type AffinebotStatus = "pending" | "active" | "error";
+
+export type AffinebotLink = {
+  workspace_id: string;
+  base_url: string;
+  client_id: string;
+  status: AffinebotStatus;
+  github_owner: string | null;
+  installation_id: number | null;
+  last_checked_at: string | null;
+  last_error: string | null;
+};

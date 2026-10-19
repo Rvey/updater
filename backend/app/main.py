@@ -1,26 +1,31 @@
 import hmac
+import json
+import re
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
-from sqlalchemy import func, or_, select, true
+from sqlalchemy import and_, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from .config import get_settings
 from . import auth as auth_utils
-from .db import ApiKey, Base, ContextRequest, ImpactNote, Note, Question, SessionLocal, Task, TechDebt, Update, User, UserSession, engine, get_db, now_utc
+from . import workspaces as ws
+from .db import ApiKey, Base, ContextRequest, GitHubRepoLink, ImpactNote, Note, Question, SessionLocal, Task, TechDebt, Update, User, UserSession, engine, get_db, now_utc
 from .explain import explain_question
+from .github_sync import item_from_webhook, verify_signature
 from .mcp_server import create_mcp_server
 from .schemas import (
     ContextRequestClaim,
     ContextRequestCreate,
     ContextRequestFulfill,
     ContextRequestRead,
+    GitHubLinkRead,
     ImpactNoteCreate,
     ImpactNoteRead,
     NOTE_CATEGORIES,
@@ -68,6 +73,9 @@ async def lifespan(_: FastAPI):
     _ensure_code_context_columns()
     _ensure_note_columns()
     _ensure_ownership_columns()
+    _ensure_project_columns()
+    with SessionLocal() as session:
+        ws.ensure_default_workspaces(session)
     mcp_app = create_mcp_server().streamable_http_app()
     mcp_mount.app = mcp_app
     try:
@@ -120,6 +128,10 @@ def _ensure_ownership_columns() -> None:
             connection.execute(text("ALTER TABLE notes ADD COLUMN user_id VARCHAR(36)"))
         if "user_id" not in task_cols:
             connection.execute(text("ALTER TABLE tasks ADD COLUMN user_id VARCHAR(36)"))
+        if "external_id" not in task_cols:
+            connection.execute(text("ALTER TABLE tasks ADD COLUMN external_id VARCHAR(255)"))
+        if "external_url" not in task_cols:
+            connection.execute(text("ALTER TABLE tasks ADD COLUMN external_url VARCHAR(600)"))
         if "user_id" not in debt_cols:
             connection.execute(text("ALTER TABLE tech_debt ADD COLUMN user_id VARCHAR(36)"))
         if "source_repo_url" not in ctx_cols:
@@ -134,6 +146,40 @@ def _ensure_ownership_columns() -> None:
             connection.execute(text("ALTER TABLE context_requests ADD COLUMN claimed_at TIMESTAMPTZ"))
 
 
+def _ensure_project_columns() -> None:
+    """Add project_id to the scoped tables and the indexes that depend on it (idempotent).
+
+    Manual DDL left to the operator (no Alembic): databases created before projects keep
+    UNIQUE(user_id, repo) on github_repo_links. Drop it by hand if two projects of one
+    account need to link the same repo, e.g. on Postgres:
+      ALTER TABLE github_repo_links DROP CONSTRAINT github_repo_links_user_id_repo_key;
+    SQLite cannot drop a constraint; rebuild the table instead.
+    """
+    from sqlalchemy import inspect, text
+
+    def columns(table: str) -> set[str]:
+        try:
+            return {column["name"] for column in inspect(engine).get_columns(table)}
+        except Exception:
+            return set()
+
+    with engine.begin() as connection:
+        for table in ("updates", "tasks", "notes", "tech_debt", "github_repo_links"):
+            if "project_id" not in columns(table):
+                connection.execute(text(f"ALTER TABLE {table} ADD COLUMN project_id VARCHAR(36)"))
+            connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table}_project_id ON {table} (project_id)"))
+    # Unique indexes can fail on dirty legacy data; never block startup for them.
+    for statement in (
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_github_repo_links_project_repo ON github_repo_links (project_id, repo)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_project_external ON tasks (project_id, external_id) WHERE external_id IS NOT NULL",
+    ):
+        try:
+            with engine.begin() as connection:
+                connection.execute(text(statement))
+        except Exception:
+            pass
+
+
 def _optional_user(db, authorization):
     try:
         return _user_for_bearer(db, authorization)
@@ -145,22 +191,6 @@ def _owner_id(db: Session, authorization: str | None) -> str | None:
     """Id of the signed-in account, or None for the shared env token / open preview."""
     owner = _optional_user(db, authorization)
     return owner.id if owner is not None else None
-
-
-def _ownership_clause(model, owner_id: str | None):
-    """SQL filter that keeps a signed-in account's rows plus legacy unowned rows.
-
-    Returns a true condition for the shared env token / open preview so callers can
-    always AND it into a query without branching.
-    """
-    if owner_id is None:
-        return true()
-    return or_(model.user_id.is_(None), model.user_id == owner_id)
-
-
-def _visible_to(item, owner_id: str | None, attribute: str = "user_id") -> bool:
-    """True when one row is visible to the account (own row, legacy row, or unrestricted)."""
-    return owner_id is None or getattr(item, attribute, None) in (None, owner_id)
 
 
 def require_token(
@@ -233,14 +263,7 @@ def _user_for_bearer(db: Session, authorization: str | None):
     return None
 
 
-def _normalize_repo_url(value):
-    cleaned = (value or '').strip().rstrip('/')
-    if cleaned.lower().endswith('.git'):
-        cleaned = cleaned[:-4].rstrip('/')
-    if cleaned.startswith('git@') and ':' in cleaned:
-        host, _, path = cleaned[4:].partition(':')
-        cleaned = 'https://' + host + '/' + path
-    return cleaned.lower()
+_normalize_repo_url = ws.normalize_repo_url
 
 
 @app.get("/api/health")
@@ -260,6 +283,7 @@ def list_updates(
     repo: str = Query(default="", max_length=600),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    project_id: str = Query(default="", max_length=80),
     db: Session = Depends(get_db),
     authorization: str | None = Header(default=None),
 ) -> list[Update]:
@@ -268,7 +292,7 @@ def list_updates(
         term = f"%{q.strip()}%"
         query = query.where(or_(Update.title.ilike(term), Update.summary.ilike(term), Update.why.ilike(term), Update.how_it_works.ilike(term)))
     owner_id = _owner_id(db, authorization)
-    query = query.where(_ownership_clause(Update, owner_id))
+    query = query.where(ws.project_filter(db, owner_id, Update, project_id.strip()))
     items = list(db.scalars(query).all())
     if repo.strip():
         wanted = _normalize_repo_url(repo)
@@ -324,7 +348,7 @@ def _find_republish_target(db: Session, payload: UpdateCreate, owner_id: str | N
     return db.scalar(
         select(Update)
         .options(selectinload(Update.questions), selectinload(Update.impact_notes), selectinload(Update.context_requests))
-        .where(Update.external_id == payload.external_id, _ownership_clause(Update, owner_id))
+        .where(Update.external_id == payload.external_id, ws.project_clause(Update, owner_id))
     )
 
 
@@ -338,6 +362,8 @@ def create_update(payload: UpdateCreate, db: Session = Depends(get_db), authoriz
     data = payload.model_dump(mode="json", exclude_none=True)
     data["repo_url"] = str(payload.repo_url)
     data["pr_url"] = str(payload.pr_url) if payload.pr_url else None
+    data.pop("project_id", None)
+    data["project_id"] = ws.resolve_project(db, owner_id, payload.project_id, str(payload.repo_url))
     if owner_id is not None:
         data["user_id"] = owner_id
     if payload.shipped_at:
@@ -360,7 +386,7 @@ def _owned_update(db: Session, update_id: str, owner_id: str | None) -> Update:
     """Fetch an update and reject access when it belongs to a different account."""
     update = db.get(Update, update_id)
     # 404 (not 403) for other accounts so ids cannot be probed.
-    if update is None or not _visible_to(update, owner_id):
+    if update is None or not ws.row_visible(db, update, owner_id):
         raise HTTPException(status_code=404, detail="Update not found")
     return update
 
@@ -497,18 +523,24 @@ def _ensure_note_columns() -> None:
 
 
 @app.get("/api/notes", response_model=list[NoteRead], dependencies=[Depends(require_token)])
-def list_notes(db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> list[Note]:
+def list_notes(
+    project_id: str = Query(default="", max_length=80),
+    db: Session = Depends(get_db),
+    authorization: str | None = Header(default=None),
+) -> list[Note]:
     _ensure_note_columns()
     query = select(Note).order_by(Note.pinned.desc(), Note.updated_at.desc(), Note.created_at.desc())
-    query = query.where(_ownership_clause(Note, _owner_id(db, authorization)))
+    query = query.where(ws.project_filter(db, _owner_id(db, authorization), Note, project_id.strip()))
     return list(db.scalars(query).all())
 
 
 @app.post("/api/notes", response_model=NoteRead, status_code=201, dependencies=[Depends(require_token)])
 def create_note(payload: NoteCreate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> Note:
     _ensure_note_columns()
+    owner_id = _owner_id(db, authorization)
     entry = Note(
-        user_id=_owner_id(db, authorization),
+        user_id=owner_id,
+        project_id=ws.resolve_project(db, owner_id, payload.project_id, payload.repository),
         title=payload.title.strip(),
         content=(payload.content or "").strip(),
         color=_normalize_note_color(payload.color),
@@ -534,9 +566,12 @@ def create_note(payload: NoteCreate, db: Session = Depends(get_db), authorizatio
 @app.patch("/api/notes/{note_id}", response_model=NoteRead, dependencies=[Depends(require_token)])
 def update_note(note_id: str, payload: NoteUpdate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> Note:
     _ensure_note_columns()
+    owner_id = _owner_id(db, authorization)
     entry = db.get(Note, note_id)
-    if not entry or not _visible_to(entry, _owner_id(db, authorization)):
+    if not entry or not ws.row_visible(db, entry, owner_id):
         raise HTTPException(status_code=404, detail="Note not found")
+    if payload.project_id:
+        entry.project_id = ws.find_project(db, owner_id, payload.project_id.strip()).id
     if payload.title is not None:
         entry.title = payload.title.strip()
     if payload.content is not None:
@@ -585,7 +620,7 @@ def update_note(note_id: str, payload: NoteUpdate, db: Session = Depends(get_db)
 @app.delete("/api/notes/{note_id}", dependencies=[Depends(require_token)])
 def delete_note(note_id: str, db: Session = Depends(get_db), authorization: str | None = Header(default=None)):
     entry = db.get(Note, note_id)
-    if not entry or not _visible_to(entry, _owner_id(db, authorization)):
+    if not entry or not ws.row_visible(db, entry, _owner_id(db, authorization)):
         raise HTTPException(status_code=404, detail="Note not found")
     db.delete(entry)
     db.commit()
@@ -629,11 +664,17 @@ def _task_ordering():
     return (Task.status.asc(), Task.position.asc(), Task.created_at.asc(), Task.id.asc())
 
 
-def _reindex_task_column(db: Session, status_value: str, owner_id: str | None = None) -> None:
-    """Compact positions inside one board column after a move or delete."""
-    query = select(Task).where(Task.status == status_value)
-    if owner_id is not None:
-        query = query.where(_ownership_clause(Task, owner_id))
+def _in_project(project_id: str | None):
+    return Task.project_id.is_(None) if project_id is None else Task.project_id == project_id
+
+
+def _column_size(db: Session, status_value: str, project_id: str | None) -> int:
+    return int(db.scalar(select(func.count()).select_from(Task).where(Task.status == status_value, _in_project(project_id))) or 0)
+
+
+def _reindex_task_column(db: Session, status_value: str, project_id: str | None = None) -> None:
+    """Compact positions inside one board column of one project after a move or delete."""
+    query = select(Task).where(Task.status == status_value, _in_project(project_id))
     items = list(
         db.scalars(
             query.order_by(Task.position.asc(), Task.created_at.asc(), Task.id.asc())
@@ -649,11 +690,12 @@ def list_tasks(
     repo: str = Query(default="", max_length=600),
     status: str = Query(default="", max_length=20),
     priority: str = Query(default="", max_length=20),
+    project_id: str = Query(default="", max_length=80),
     db: Session = Depends(get_db),
     authorization: str | None = Header(default=None),
 ) -> list[Task]:
     query = select(Task).order_by(*_task_ordering())
-    query = query.where(_ownership_clause(Task, _owner_id(db, authorization)))
+    query = query.where(ws.project_filter(db, _owner_id(db, authorization), Task, project_id.strip()))
     if status.strip():
         query = query.where(Task.status == _normalize_task_status(status))
     if priority.strip():
@@ -685,13 +727,11 @@ def list_tasks(
 def create_task(payload: TaskCreate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> Task:
     status_value = _normalize_task_status(payload.status)
     owner_id = _owner_id(db, authorization)
-    next_position = db.scalar(
-        select(func.count())
-        .select_from(Task)
-        .where(Task.status == status_value, _ownership_clause(Task, owner_id))
-    ) or 0
+    project_id = ws.resolve_project(db, owner_id, payload.project_id, str(payload.repo_url) if payload.repo_url else None)
+    next_position = _column_size(db, status_value, project_id)
     entry = Task(
         user_id=owner_id,
+        project_id=project_id,
         title=payload.title.strip(),
         description=(payload.description or "").strip(),
         status=status_value,
@@ -715,7 +755,7 @@ def create_task(payload: TaskCreate, db: Session = Depends(get_db), authorizatio
 @app.get("/api/tasks/{task_id}", response_model=TaskRead, dependencies=[Depends(require_token)])
 def get_task(task_id: str, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> Task:
     entry = db.get(Task, task_id)
-    if not entry or not _visible_to(entry, _owner_id(db, authorization)):
+    if not entry or not ws.row_visible(db, entry, _owner_id(db, authorization)):
         raise HTTPException(status_code=404, detail="Task not found")
     return entry
 
@@ -724,8 +764,17 @@ def get_task(task_id: str, db: Session = Depends(get_db), authorization: str | N
 def update_task(task_id: str, payload: TaskUpdate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> Task:
     owner_id = _owner_id(db, authorization)
     entry = db.get(Task, task_id)
-    if not entry or not _visible_to(entry, owner_id):
+    if not entry or not ws.row_visible(db, entry, owner_id):
         raise HTTPException(status_code=404, detail="Task not found")
+    old_project_id = entry.project_id
+    if payload.project_id:
+        target_id = ws.find_project(db, owner_id, payload.project_id.strip()).id
+        if target_id != old_project_id:
+            position = _column_size(db, entry.status, target_id)
+            entry.project_id = target_id
+            entry.position = position
+            db.flush()
+            _reindex_task_column(db, entry.status, old_project_id)
     if payload.title is not None:
         entry.title = payload.title.strip()
     if payload.description is not None:
@@ -749,14 +798,11 @@ def update_task(task_id: str, payload: TaskUpdate, db: Session = Depends(get_db)
         status_value = _normalize_task_status(payload.status)
         if status_value != entry.status:
             old_status = entry.status
-            next_position = db.scalar(
-                select(func.count())
-                .select_from(Task)
-                .where(Task.status == status_value, _ownership_clause(Task, owner_id))
-            ) or 0
+            position = _column_size(db, status_value, entry.project_id)
             entry.status = status_value
-            entry.position = int(next_position)
-            _reindex_task_column(db, old_status, owner_id)
+            entry.position = position
+            db.flush()
+            _reindex_task_column(db, old_status, entry.project_id)
         if status_value == "done":
             entry.completed_at = entry.completed_at or now_utc()
         else:
@@ -767,13 +813,122 @@ def update_task(task_id: str, payload: TaskUpdate, db: Session = Depends(get_db)
     return entry
 
 
+def _github_task_status(item) -> str:
+    if item.state == "closed":
+        return "done"
+    return "review" if item.is_pr and not item.draft else "backlog"
+
+
+def _github_task_scope(owner_id: str | None, project_id: str | None):
+    """Tasks of one project; rows with no project fall back to the creator (legacy)."""
+    if project_id is not None:
+        return Task.project_id == project_id
+    return and_(Task.project_id.is_(None), Task.user_id.is_(None) if owner_id is None else Task.user_id == owner_id)
+
+
+def _upsert_github_task(db: Session, item, owner_id: str | None, repo_url: str, project_id: str | None = None) -> bool:
+    """Create or refresh the task for one GitHub item. Returns True when created."""
+    kind = "pull-request" if item.is_pr else "issue"
+    tags = _normalize_task_tags(["github", kind, *item.labels])
+    title = item.title.strip()[:180]
+    description = (item.body or "").strip()[:7900]
+    remote_done = item.state == "closed"
+    entry = db.scalar(select(Task).where(Task.external_id == item.external_id, _github_task_scope(owner_id, project_id)))
+    if entry is None:
+        status_value = _github_task_status(item)
+        position = _column_size(db, status_value, project_id)
+        db.add(Task(
+            user_id=owner_id, project_id=project_id, title=title, description=description, status=status_value,
+            position=int(position), repo_url=repo_url, tags=tags, assignee=item.assignee,
+            external_id=item.external_id, external_url=item.url,
+            completed_at=now_utc() if remote_done else None,
+        ))
+        db.flush()
+        return True
+    entry.title, entry.description, entry.tags = title, description, tags
+    entry.assignee, entry.external_url, entry.repo_url = item.assignee, item.url, repo_url
+    # Only a change of GitHub state moves the card; local column choices otherwise stay.
+    if remote_done and entry.status != "done":
+        entry.status, entry.completed_at = "done", now_utc()
+    elif not remote_done and entry.status == "done":
+        entry.status, entry.completed_at = _github_task_status(item), None
+    db.flush()
+    return False
+
+
+@app.get("/api/github/links", response_model=list[GitHubLinkRead], dependencies=[Depends(require_token)])
+def list_github_links(
+    project_id: str = Query(default="", max_length=80),
+    db: Session = Depends(get_db),
+    authorization: str | None = Header(default=None),
+) -> list[GitHubRepoLink]:
+    owner_id = _owner_id(db, authorization)
+    query = select(GitHubRepoLink).where(ws.project_filter(db, owner_id, GitHubRepoLink, project_id.strip()))
+    return list(db.scalars(query.order_by(GitHubRepoLink.created_at.asc())).all())
+
+
+@app.delete("/api/github/links/{link_id}", dependencies=[Depends(require_token)])
+def delete_github_link(link_id: str, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    owner_id = _owner_id(db, authorization)
+    link = db.get(GitHubRepoLink, link_id)
+    if not link or not ws.row_visible(db, link, owner_id):
+        raise HTTPException(status_code=404, detail="Link not found")
+    db.delete(link)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/github/webhook", include_in_schema=False)
+async def github_webhook(request: Request, db: Session = Depends(get_db)) -> dict[str, object]:
+    """Receive issue and pull request events from a GitHub App or repository webhook."""
+    body = await request.body()
+    if not settings.github_webhook_secret:
+        raise HTTPException(status_code=503, detail="GITHUB_WEBHOOK_SECRET is not configured")
+    if not verify_signature(settings.github_webhook_secret, body, request.headers.get("x-hub-signature-256")):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+    event = request.headers.get("x-github-event", "")
+    if event == "ping":
+        return {"ok": True, "pong": True}
+    try:
+        payload = json.loads(body)
+        if event == "pull_request":
+            from .delegation_routes import apply_pr_webhook
+
+            apply_pr_webhook(db, payload)
+        parsed = item_from_webhook(event, payload)
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(status_code=400, detail="Malformed payload")
+    if parsed is None:
+        return {"ok": True, "ignored": event}
+    repo_name, item = parsed
+    links = list(db.scalars(select(GitHubRepoLink).where(GitHubRepoLink.repo == repo_name)).all())
+    removed = payload.get("action") in ("deleted", "transferred")
+    for link in links:
+        if removed:
+            for task in db.scalars(select(Task).where(
+                Task.external_id == item.external_id,
+                _github_task_scope(link.user_id, link.project_id),
+            )).all():
+                db.delete(task)
+        else:
+            _upsert_github_task(db, item, link.user_id, f"https://github.com/{repo_name}", link.project_id)
+        link.last_event_at = now_utc()
+    db.commit()
+    for link in links:
+        for column in TASK_STATUSES:
+            _reindex_task_column(db, column, link.project_id)
+    db.commit()
+    return {"ok": True, "linked": len(links)}
+
+
 @app.post("/api/tasks/reorder", response_model=list[TaskRead], dependencies=[Depends(require_token)])
 def reorder_tasks(payload: TaskReorder, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> list[Task]:
     """Persist a drag-and-drop board state: ordered task ids per column."""
     if not payload.columns:
         raise HTTPException(status_code=422, detail="Provide at least one column")
     owner_id = _owner_id(db, authorization)
-    tasks = {task.id: task for task in db.scalars(select(Task).where(_ownership_clause(Task, owner_id))).all()}
+    scope = ws.project_filter(db, owner_id, Task, (payload.project_id or "").strip())
+    tasks = {task.id: task for task in db.scalars(select(Task).where(scope)).all()}
     seen: set[str] = set()
     normalized: list[tuple[str, list[str]]] = []
     for raw_status, ids in payload.columns.items():
@@ -798,22 +953,25 @@ def reorder_tasks(payload: TaskReorder, db: Session = Depends(get_db), authoriza
                 task.completed_at = task.completed_at or now
             else:
                 task.completed_at = None
-    for status_value in TASK_STATUSES:
-        _reindex_task_column(db, status_value, owner_id)
+    db.flush()
+    touched_projects = {tasks[task_id].project_id for task_id in seen}
+    for project_id in touched_projects:
+        for status_value in TASK_STATUSES:
+            _reindex_task_column(db, status_value, project_id)
     db.commit()
-    return list(db.scalars(select(Task).where(_ownership_clause(Task, owner_id)).order_by(*_task_ordering())).all())
+    return list(db.scalars(select(Task).where(scope).order_by(*_task_ordering())).all())
 
 
 @app.delete("/api/tasks/{task_id}", dependencies=[Depends(require_token)])
 def delete_task(task_id: str, db: Session = Depends(get_db), authorization: str | None = Header(default=None)):
     owner_id = _owner_id(db, authorization)
     entry = db.get(Task, task_id)
-    if not entry or not _visible_to(entry, owner_id):
+    if not entry or not ws.row_visible(db, entry, owner_id):
         raise HTTPException(status_code=404, detail="Task not found")
-    status_value = entry.status
+    status_value, project_id = entry.status, entry.project_id
     db.delete(entry)
     db.flush()
-    _reindex_task_column(db, status_value, owner_id)
+    _reindex_task_column(db, status_value, project_id)
     db.commit()
     return {"ok": True}
 
@@ -844,11 +1002,12 @@ def list_tech_debt(
     repo: str = Query(default="", max_length=600),
     urgency: str = Query(default="", max_length=20),
     status: str = Query(default="", max_length=20),
+    project_id: str = Query(default="", max_length=80),
     db: Session = Depends(get_db),
     authorization: str | None = Header(default=None),
 ) -> list[TechDebt]:
     query = select(TechDebt).order_by(TechDebt.created_at.desc())
-    query = query.where(_ownership_clause(TechDebt, _owner_id(db, authorization)))
+    query = query.where(ws.project_filter(db, _owner_id(db, authorization), TechDebt, project_id.strip()))
     if q.strip():
         term = f"%{q.strip()}%"
         query = query.where(
@@ -874,8 +1033,10 @@ def list_tech_debt(
 def create_tech_debt(payload: TechDebtCreate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> TechDebt:
     urgency = _normalize_tech_debt_urgency(payload.urgency)
     status_value = _normalize_tech_debt_status(payload.status)
+    owner_id = _owner_id(db, authorization)
     entry = TechDebt(
-        user_id=_owner_id(db, authorization),
+        user_id=owner_id,
+        project_id=ws.resolve_project(db, owner_id, payload.project_id, str(payload.repo_url)),
         title=payload.title.strip(),
         scope=payload.scope.strip(),
         description=payload.description.strip(),
@@ -903,16 +1064,19 @@ def create_tech_debt(payload: TechDebtCreate, db: Session = Depends(get_db), aut
 @app.get("/api/tech-debt/{debt_id}", response_model=TechDebtRead, dependencies=[Depends(require_token)])
 def get_tech_debt(debt_id: str, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> TechDebt:
     entry = db.get(TechDebt, debt_id)
-    if not entry or not _visible_to(entry, _owner_id(db, authorization)):
+    if not entry or not ws.row_visible(db, entry, _owner_id(db, authorization)):
         raise HTTPException(status_code=404, detail="Tech debt item not found")
     return entry
 
 
 @app.patch("/api/tech-debt/{debt_id}", response_model=TechDebtRead, dependencies=[Depends(require_token)])
 def update_tech_debt(debt_id: str, payload: TechDebtUpdate, db: Session = Depends(get_db), authorization: str | None = Header(default=None)) -> TechDebt:
+    owner_id = _owner_id(db, authorization)
     entry = db.get(TechDebt, debt_id)
-    if not entry or not _visible_to(entry, _owner_id(db, authorization)):
+    if not entry or not ws.row_visible(db, entry, owner_id):
         raise HTTPException(status_code=404, detail="Tech debt item not found")
+    if payload.project_id:
+        entry.project_id = ws.find_project(db, owner_id, payload.project_id.strip()).id
     if payload.title is not None:
         entry.title = payload.title.strip()
     if payload.scope is not None:
@@ -955,7 +1119,7 @@ def update_tech_debt(debt_id: str, payload: TechDebtUpdate, db: Session = Depend
 @app.delete("/api/tech-debt/{debt_id}", dependencies=[Depends(require_token)])
 def delete_tech_debt(debt_id: str, db: Session = Depends(get_db), authorization: str | None = Header(default=None)):
     entry = db.get(TechDebt, debt_id)
-    if not entry or not _visible_to(entry, _owner_id(db, authorization)):
+    if not entry or not ws.row_visible(db, entry, _owner_id(db, authorization)):
         raise HTTPException(status_code=404, detail="Tech debt item not found")
     db.delete(entry)
     db.commit()
@@ -989,7 +1153,12 @@ def list_context_requests(status: str = Query(default="pending", max_length=20),
     items = list(db.scalars(query).all())
     owner = _optional_user(db, authorization)
     if owner is not None:
-        items = [it for it in items if it.update is None or _visible_to(it.update, owner.id)]
+        reachable = set(ws.member_project_ids(db, owner.id) or [])
+        items = [
+            it for it in items
+            if it.update is None
+            or (it.update.project_id in reachable if it.update.project_id else it.update.user_id == owner.id)
+        ]
     if repo.strip():
         wanted = _normalize_repo_url(repo)
         items = [it for it in items if it.update is not None and _normalize_repo_url(it.update.repo_url) == wanted]
@@ -1008,7 +1177,7 @@ def fulfill_context_request(request_id: str, payload: ContextRequestFulfill, db:
     if update is None:
         raise HTTPException(status_code=404, detail="Update not found")
     owner = _optional_user(db, authorization)
-    if owner is not None and not _visible_to(update, owner.id):
+    if owner is not None and not ws.row_visible(db, update, owner.id):
         raise HTTPException(status_code=403, detail="This request belongs to another account")
     claimed_repo = (payload.repo_url or "").strip()
     if claimed_repo:
@@ -1042,7 +1211,7 @@ def claim_context_request(request_id: str, payload: ContextRequestClaim, db: Ses
         return entry
     update = db.get(Update, entry.update_id)
     owner = _optional_user(db, authorization)
-    if owner is not None and update is not None and not _visible_to(update, owner.id):
+    if owner is not None and update is not None and not ws.row_visible(db, update, owner.id):
         raise HTTPException(status_code=403, detail="This request belongs to another account")
     agent = (payload.agent or "").strip()[:100] or None
     now = now_utc()
@@ -1086,6 +1255,8 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     user = User(email=email, password_hash=auth_utils.hash_password(payload.password))
     db.add(user)
     try:
+        db.flush()
+        ws.create_default_workspace(db, user)
         db.commit()
     except IntegrityError as err:
         db.rollback()
@@ -1309,6 +1480,20 @@ def connect_script() -> PlainTextResponse:
         headers={"Cache-Control": "no-store"},
     )
 
+
+# Must stay below require_token/_current_user (workspace_routes imports them) and above the "/" mount.
+from .workspace_routes import router as workspace_router  # noqa: E402
+
+app.include_router(workspace_router)
+from .affinebot_routes import router as affinebot_router  # noqa: E402
+
+app.include_router(affinebot_router)
+from .github_routes import router as github_router  # noqa: E402
+
+app.include_router(github_router)
+from .delegation_routes import router as delegation_router  # noqa: E402
+
+app.include_router(delegation_router)
 
 mcp_mount = ProtectedMCPApp()
 app.mount("/", mcp_mount)

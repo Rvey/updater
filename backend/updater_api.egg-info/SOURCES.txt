@@ -5,6 +5,7 @@ app/backfill_ownership.py
 app/config.py
 app/db.py
 app/explain.py
+app/github_sync.py
 app/main.py
 app/mcp_server.py
 app/schemas.py

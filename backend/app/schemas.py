@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl, SecretStr
 
 
 class CodeExcerpt(BaseModel):
@@ -11,6 +12,7 @@ class CodeExcerpt(BaseModel):
 
 
 class UpdateCreate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     external_id: str | None = Field(default=None, max_length=255)
     title: str = Field(min_length=3, max_length=180)
     summary: str = Field(min_length=10)
@@ -67,6 +69,7 @@ TECH_DEBT_STATUSES = ("open", "in-progress", "resolved", "wont-fix")
 
 
 class NoteCreate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     title: str = Field(min_length=1, max_length=180)
     content: str = Field(default="", max_length=10000)
     color: str = Field(default="default", max_length=20)
@@ -85,6 +88,7 @@ class NoteCreate(BaseModel):
 
 
 class NoteUpdate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     title: str | None = Field(default=None, min_length=1, max_length=180)
     content: str | None = Field(default=None, max_length=10000)
     color: str | None = Field(default=None, max_length=20)
@@ -106,6 +110,7 @@ class NoteRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    project_id: str | None = None
     title: str
     content: str
     color: str
@@ -130,6 +135,7 @@ TASK_PRIORITIES = ("low", "medium", "high")
 
 
 class TaskCreate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     title: str = Field(min_length=1, max_length=180)
     description: str = Field(default="", max_length=8000)
     status: str = Field(default="backlog", max_length=20)
@@ -143,6 +149,7 @@ class TaskCreate(BaseModel):
 
 
 class TaskUpdate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     title: str | None = Field(default=None, min_length=1, max_length=180)
     description: str | None = Field(default=None, max_length=8000)
     status: str | None = Field(default=None, max_length=20)
@@ -159,6 +166,7 @@ class TaskRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    project_id: str | None = None
     title: str
     description: str
     status: str
@@ -170,13 +178,86 @@ class TaskRead(BaseModel):
     assignee: str | None
     due_date: datetime | None
     author_agent: str | None
+    external_id: str | None = None
+    external_url: str | None = None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
 
 
+class GitHubSyncRequest(BaseModel):
+    """No token field: GitHub is reached only through the workspace's Affinebot link (extra keys are ignored)."""
+
+    project_id: str = Field(min_length=1, max_length=80)
+    repo: str = Field(min_length=3, max_length=300)
+    state: str = Field(default="open", pattern="^(open|closed|all)$")
+    include_issues: bool = True
+    include_prs: bool = Field(default=True, validation_alias=AliasChoices("include_prs", "include_pull_requests"))
+    numbers: list[int] | None = Field(default=None, max_length=200)  # only import these issue/PR numbers
+
+
+class GitHubSyncResult(BaseModel):
+    repo: str
+    created: int
+    updated: int
+    total: int
+    truncated: bool = False
+
+
+class GitHubLinkCreate(BaseModel):
+    project_id: str = Field(min_length=1, max_length=80)
+    repo: str = Field(min_length=3, max_length=300)
+
+
+class GitHubRepoRead(BaseModel):
+    full_name: str
+    private: bool = False
+    default_branch: str | None = None
+    linked: bool = False
+    project_id: str | None = None
+
+
+class GitHubItemRead(BaseModel):
+    number: int
+    title: str = ""
+    body: str = ""
+    state: str = "open"
+    merged: bool = False
+    draft: bool = False
+    url: str = ""
+    author: str | None = None
+    assignees: list[str] = []
+    labels: list[str] = []
+    comments: int = 0
+    is_pr: bool = False
+    updated_at: str | None = None
+    branch: str | None = None
+    task_id: str | None = None
+
+
+class GitHubItemsPage(BaseModel):
+    items: list[GitHubItemRead]
+    next_page: int | None = None
+
+
+class GitHubLinkRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str | None = None
+    repo: str
+    created_at: datetime
+    last_event_at: datetime | None
+
+
+class GitHubLinkCreated(GitHubLinkRead):
+    sync: GitHubSyncResult | None = None
+    sync_error: str | None = None
+
+
 class TaskReorder(BaseModel):
     columns: dict[str, list[str]]
+    project_id: str | None = Field(default=None, max_length=80)
 
 
 class ContextRequestCreate(BaseModel):
@@ -213,6 +294,7 @@ class ContextRequestClaim(BaseModel):
 
 
 class TechDebtCreate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     title: str = Field(min_length=3, max_length=180)
     scope: str = Field(min_length=3, max_length=300)
     description: str = Field(min_length=10)
@@ -231,6 +313,7 @@ class TechDebtCreate(BaseModel):
 
 
 class TechDebtUpdate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=80)
     title: str | None = Field(default=None, min_length=3, max_length=180)
     scope: str | None = Field(default=None, min_length=3, max_length=300)
     description: str | None = Field(default=None, min_length=10)
@@ -250,6 +333,7 @@ class TechDebtRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    project_id: str | None = None
     title: str
     scope: str
     description: str
@@ -274,6 +358,7 @@ class UpdateRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    project_id: str | None = None
     external_id: str | None
     user_id: str | None = None
     title: str
@@ -341,3 +426,174 @@ class ApiKeyRead(BaseModel):
     created_at: datetime
     last_used_at: datetime | None
     revoked_at: datetime | None
+
+
+WORKSPACE_ROLES = ("owner", "member")
+_ROLE_PATTERN = "^(owner|member)$"
+
+
+class ProjectRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workspace_id: str
+    name: str
+    slug: str
+    repo_url: str | None = None
+    is_default: bool = False
+    created_at: datetime
+
+
+class ProjectBrief(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    slug: str
+    repo_url: str | None = None
+    is_default: bool = False
+
+
+class WorkspaceRead(BaseModel):
+    id: str
+    name: str
+    slug: str
+    role: str
+    projects: list[ProjectBrief] = Field(default_factory=list)
+
+
+class WorkspaceCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class WorkspaceRename(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class MemberRead(BaseModel):
+    user_id: str
+    email: str
+    role: str
+    created_at: datetime
+
+
+class InviteRead(BaseModel):
+    id: str
+    email: str
+    role: str
+    created_at: datetime
+    expires_at: datetime
+
+
+class InviteCreated(BaseModel):
+    id: str
+    email: str
+    role: str
+    token: str
+    expires_at: datetime
+
+
+class MemberAdd(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    role: str = Field(default="member", pattern=_ROLE_PATTERN)
+
+
+class MemberAddResult(BaseModel):
+    status: str  # "added" | "invited"
+    member: MemberRead | None = None
+    invite: InviteCreated | None = None
+
+
+class MemberRoleUpdate(BaseModel):
+    role: str = Field(pattern=_ROLE_PATTERN)
+
+
+class InviteCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    role: str = Field(default="member", pattern=_ROLE_PATTERN)
+
+
+class InviteAccept(BaseModel):
+    token: str = Field(min_length=8, max_length=200)
+
+
+class InviteAccepted(BaseModel):
+    workspace_id: str
+    role: str
+
+
+class ProjectCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    repo_url: str | None = Field(default=None, max_length=600)
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    repo_url: str | None = Field(default=None, max_length=600)
+
+
+class AffinebotLinkWrite(BaseModel):
+    # Lenient on purpose: missing-field 422s would echo the whole body (secret included).
+    # The route validates presence and shape and returns a plain detail.
+    base_url: str = Field(default="", max_length=300)
+    client_id: str = Field(default="", max_length=36)
+    secret: SecretStr = SecretStr("")
+
+
+class AffinebotLinkRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    workspace_id: str
+    base_url: str
+    client_id: str
+    status: str
+    github_owner: str | None = None
+    installation_id: int | None = None
+    last_checked_at: datetime | None = None
+    last_error: str | None = None
+
+
+class DelegateRequest(BaseModel):
+    instruction: str | None = Field(default=None, max_length=4000)
+    base_branch: str | None = Field(default=None, max_length=255)
+
+
+class DelegationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    task_id: str
+    project_id: str | None = None
+    repo: str
+    issue_number: int | None = None
+    status: str
+    branch: str | None = None
+    pr_url: str | None = None
+    pr_number: int | None = None
+    error: str | None = None
+    summary: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None = None
+    task_title: str | None = None
+    task_description: str | None = None
+    issue_url: str | None = None
+    suggested_branch: str | None = None
+    instruction: str = ""
+    base_branch: str | None = None
+    claimed_by: str | None = None
+    claimed_at: datetime | None = None
+
+
+class DelegationClaim(BaseModel):
+    agent: str | None = Field(default=None, max_length=100)
+
+
+class DelegationReport(BaseModel):
+    status: Literal["running", "pr_opened", "failed"]
+    branch: str | None = Field(default=None, max_length=255)
+    pr_url: str | None = Field(default=None, max_length=600)
+    pr_number: int | None = None
+    summary: str | None = Field(default=None, max_length=4000)
+    error: str | None = Field(default=None, max_length=4000)
+    repo_url: str | None = Field(default=None, max_length=600)

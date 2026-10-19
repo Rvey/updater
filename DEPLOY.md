@@ -19,6 +19,11 @@ This follows Octo Flow's Dokploy layout: one Compose application, separate publi
    # Optional: enables AI-generated answers
    OPENROUTER_API_KEY=
    LLM_MODEL=google/gemini-3.5-flash-lite
+   # Affinebot and GitHub (see README: "Connecting Affinebot" and "GitHub")
+   AFFINEBOT_TIMEOUT_S=10
+   # Recommended: encrypts stored Affinebot link tokens (empty = plain text)
+   UPDATER_SECRET_KEY=replace-with-a-long-random-string
+   GITHUB_WEBHOOK_SECRET=replace-with-the-github-app-webhook-secret
    ```
 
 4. Attach `app.example.com` to the `web` service on container port **80**, and `api.example.com` to the `api` service on container port **8000**. Enable HTTPS for both domains. Replace the example origins above with these exact public origins (no trailing slash). `MCP_ALLOWED_HOSTS` must contain the public API hostname (bare hostname is enough — the server also accepts any port on it), otherwise every `POST /mcp` through Cloudflare/Dokploy is rejected with `421 Invalid Host header` before any MCP logic runs. `UPDATER_API_URL` is a fallback for the same check.
@@ -31,6 +36,14 @@ If the `web` image build fails with `npm error Missing: @emnapi/... from lock fi
 ```bash
 docker run --rm -v "$PWD/frontend":/app -w /app node:22-bookworm-slim npm install --package-lock-only
 ```
+
+### Affinebot and GitHub
+
+The Affinebot link (base URL, client id and token) is entered per workspace in **Settings > Integrations**, not in Dokploy. Keep no GitHub token in Dokploy; repos and issues come from the Affinebot GitHub App.
+
+- Delegated tasks run on each user's own agent over MCP, so no callback URL or secret is needed.
+- In the GitHub App, set the webhook URL to `https://api.example.com/api/github/webhook`, with the same secret as `GITHUB_WEBHOOK_SECRET`. Subscribe to `issues` and `pull_request`.
+- The App needs Metadata: read, Issues: read & write, Pull requests: read & write and Contents: read & write. Re-approve after any permission change.
 
 ## Verify
 

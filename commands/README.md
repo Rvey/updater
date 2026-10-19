@@ -42,9 +42,10 @@ Files:
 - `codex/skills/updater-*/SKILL.md` → Codex skills (preferred going forward)
 
 Commands:
-- `updater` → router: bare ships the last verified changes (then checks requests); `updater check -> ship` verifies local changes, publishes them to the app, then checks requests; `updater check` / `updater impact ...` / `updater list ...` for the rest
+- `updater` → router: bare ships the last verified changes (then checks requests); `updater check -> ship` verifies local changes, publishes them to the app, then checks requests; `updater delegate` / `updater check` / `updater impact ...` / `updater list ...` for the rest
 - `updater-ship` → `publish_feature` (after verified work)
 - `updater-check` → `list_context_requests` + `fulfill_context_request`
+- `updater-delegate` → `list_delegations` + `claim_delegation` + `report_delegation`: runs tasks the user delegated to their own agent (branch, fix, tests, `gh pr create`, report). Uses your own agent credits, not a cloud worker. `updater-watch.py` can claim and spawn it automatically in mapped checkouts
 - `updater-impact` → `list_feature_updates` + `add_feature_impact`
 - `tech-depth` → scan for tech debt and rushed decisions, `report_tech_debt` per finding (scope, description, mitigation, urgency, impact, current state)
 
@@ -54,7 +55,7 @@ Commands:
 # Claude Code
 mkdir -p ~/.claude/commands
 cp commands/claude/*.md ~/.claude/commands/
-# → /updater-ship, /updater-check, /updater-impact (personal commands)
+# → /updater-ship, /updater-check, /updater-delegate, /updater-impact (personal commands)
 
 # OpenCode
 mkdir -p ~/.config/opencode/commands

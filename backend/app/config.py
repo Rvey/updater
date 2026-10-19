@@ -13,7 +13,11 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     openrouter_api_key: str = ""
     allow_open_registration: bool = True
+    github_webhook_secret: str = ""
     llm_model: str = "google/gemini-3.5-flash-lite"
+    # Affinebot link (per-workspace credentials live in AffinebotLink; these are global knobs)
+    affinebot_timeout_s: float = 10.0
+    updater_secret_key: str = ""  # optional; encrypts link secrets at rest (Fernet)
 
 
 @lru_cache

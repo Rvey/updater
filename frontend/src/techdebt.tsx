@@ -1,3 +1,5 @@
+import { request as api, withProject } from "./lib/api";
+import { repositoryKey, uniqueRepositories } from "./lib/repositories";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
@@ -19,25 +21,6 @@ import type { NewTechDebt, TechDebt, TechDebtStatus, TechDebtUrgency } from "./t
 import { Button } from "./components/ui/button";
 import "./techdebt.css";
 
-const apiBase = (import.meta as any).env.VITE_API_BASE_URL || "";
-
-async function api<T>(path: string, token: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(apiBase + "/api" + path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: "Bearer " + token } : {}),
-      ...options?.headers,
-    },
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const error = new Error(body.detail || ("Request failed (" + response.status + ")")) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return response.json() as Promise<T>;
-}
 
 const URGENCIES: TechDebtUrgency[] = ["low", "medium", "high", "critical"];
 const STATUSES: TechDebtStatus[] = ["open", "in-progress", "resolved", "wont-fix"];
@@ -315,7 +298,7 @@ function TechDebtDetail({ item, token, onChanged, onDeleted }: { item: TechDebt;
     </div>
   );
 }
-export function TechDebtView({ token, repos }: { token: string; repos: string[] }) {
+export function TechDebtView({ token, repos, projectId = null }: { token: string; repos: string[]; projectId?: string | null }) {
   const [items, setItems] = useState<TechDebt[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -331,7 +314,7 @@ export function TechDebtView({ token, repos }: { token: string; repos: string[] 
     setLoading(true);
     setError("");
     try {
-      const data = await api<TechDebt[]>("/tech-debt", token);
+      const data = await api<TechDebt[]>(withProject("/tech-debt", projectId), token);
       setItems(data);
       setSelectedId((c) => (c && data.some((d) => d.id === c) ? c : data[0]?.id || null));
     } catch (err) {
@@ -343,7 +326,7 @@ export function TechDebtView({ token, repos }: { token: string; repos: string[] 
 
   useEffect(() => {
     load();
-  }, [token]);
+  }, [token, projectId]);
 
   const openCount = items.filter((i) => i.status === "open" || i.status === "in-progress").length;
   const hotCount = items.filter((i) => (i.urgency === "high" || i.urgency === "critical") && i.status !== "resolved" && i.status !== "wont-fix").length;
@@ -353,7 +336,7 @@ export function TechDebtView({ token, repos }: { token: string; repos: string[] 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
     return items.filter((i) => {
-      if (repo !== "All repos" && i.repo_url !== repo) return false;
+      if (repo !== "All repos" && repositoryKey(i.repo_url) !== repositoryKey(repo)) return false;
       if (urgency !== "all" && i.urgency !== urgency) return false;
       if (status === "open-all") {
         if (i.status === "resolved" || i.status === "wont-fix") return false;
@@ -369,7 +352,7 @@ export function TechDebtView({ token, repos }: { token: string; repos: string[] 
   const create = async (v: NewTechDebt) => {
     setSaving(true);
     try {
-      const created = await api<TechDebt>("/tech-debt", token, { method: "POST", body: JSON.stringify(v) });
+      const created = await api<TechDebt>("/tech-debt", token, { method: "POST", body: JSON.stringify(projectId ? { ...v, project_id: projectId } : v) });
       setItems((c) => [created, ...c]);
       setSelectedId(created.id);
       setNewOpen(false);
@@ -391,7 +374,7 @@ export function TechDebtView({ token, repos }: { token: string; repos: string[] 
     });
   };
 
-  const repoOptions = ["All repos", ...Array.from(new Set([...repos, ...items.map((i) => i.repo_url)]))];
+  const repoOptions = ["All repos", ...uniqueRepositories([...repos, ...items.map((i) => i.repo_url)])];
 
   return (
     <div className="td-wrap">
