@@ -540,6 +540,10 @@ class AffinebotLinkWrite(BaseModel):
     secret: SecretStr = SecretStr("")
 
 
+class AffinebotConnect(BaseModel):
+    owner: str = Field(default="", max_length=100)
+
+
 class AffinebotLinkRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -12,6 +12,12 @@ services:
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-updaterapi.rveybox.dev}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-google/gemini-3.5-flash-lite}
+      AFFINEBOT_URL: ${AFFINEBOT_URL:-}
+      AFFINEBOT_ADMIN_TOKEN: ${AFFINEBOT_ADMIN_TOKEN:-}
+      AFFINEBOT_TIMEOUT_S: ${AFFINEBOT_TIMEOUT_S:-10}
+      UPDATER_SECRET_KEY: ${UPDATER_SECRET_KEY:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      ALLOW_OPEN_REGISTRATION: ${ALLOW_OPEN_REGISTRATION:-True}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
       interval: 30s

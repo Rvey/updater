@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     llm_model: str = "google/gemini-3.5-flash-lite"
     # Affinebot link (per-workspace credentials live in AffinebotLink; these are global knobs)
     affinebot_timeout_s: float = 10.0
+    # Managed mode (both set): the server mints per-workspace Affinebot clients itself.
+    affinebot_url: str = ""
+    affinebot_admin_token: str = ""
     updater_secret_key: str = ""  # optional; encrypts link secrets at rest (Fernet)
 
 
