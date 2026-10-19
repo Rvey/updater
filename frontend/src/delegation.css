@@ -22,3 +22,13 @@
 .dg-summary { margin: 8px 0 0; font-size: 12.5px; color: var(--tk-text-2); }
 .dg-fail { margin: 8px 0 0; font-size: 12.5px; color: var(--tk-danger); }
 @media (prefers-reduced-motion: reduce) { .dg-dot { animation: none; } }
+
+.dg-explain { margin: 0; font-size: 12.5px; color: var(--tk-text-2); }
+.dg-how { font-size: 12.5px; color: var(--tk-text-2); }
+.dg-how summary { cursor: pointer; font-weight: 600; }
+.dg-how ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.dg-how code, .dg-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+  background: var(--tk-hover); border: 1px solid var(--tk-border); border-radius: 4px; padding: 1px 5px;
+}
+.dg-hint { margin: 8px 0 0; font-size: 12.5px; color: var(--tk-text-2); }

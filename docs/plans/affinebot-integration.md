@@ -505,3 +505,7 @@ DONE WHEN: all test suites pass, the smoke steps are recorded as pass/fail/not-r
 - Projects are free containers with optional repo_url; updates, tasks, notes and tech debt are project-scoped.
 - One GitHub owner per workspace link.
 - Tests: run updater backend with `env -u UPDATER_TOKEN uv run pytest -q` (shell exports UPDATER_TOKEN); Affinebot with `uv run pytest -q`; frontend with `npm run build`.
+
+## Change (2026-10-19): delegation runs on the user's own agent
+
+Delegated work no longer runs on an Affinebot cloud worker paid by the app's `ANTHROPIC_API_KEY`. Delegating queues the job in updater; only the assigning user's own coding agent (Claude Code, Codex, OpenCode or Cursor, connected over MCP with their own API key) can claim it, so their own credits are used. The agent works in its local checkout via `/updater-delegate` (or `updater-watch.py watch --auto`), opens the PR with its own git and `gh`, and reports through `report_delegation`. Affinebot keeps only the `/link` repos/issues/PRs API; its delegation API, callback and Claude worker were reverted, and `UPDATER_CALLBACK_SECRET`, `AFFINEBOT_CALLBACK_SECRET`, `UPDATER_PUBLIC_URL` and `ANTHROPIC_API_KEY` are no longer needed. The GitHub App only needs Pull requests: read on top of its existing permissions.

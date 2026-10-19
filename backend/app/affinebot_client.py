@@ -172,19 +172,6 @@ class AffinebotClient:
         _cache.set(key, data, ITEMS_TTL_S)
         return data
 
-    def create_delegation(self, payload: dict) -> dict:
-        """POST /link/v1/delegations {delegation_id, repo, issue_number, title, instruction, base_branch,
-        callback_url} -> 202 {remote_id, status}. Idempotent on delegation_id."""
-        return self._request("POST", "/link/v1/delegations", json=payload)
-
-    def get_delegation(self, remote_id: str) -> dict:
-        """GET /link/v1/delegations/{remote_id} -> {status, branch, pr_url, pr_number, error, summary}."""
-        return self._request("GET", f"/link/v1/delegations/{remote_id}")
-
-    def cancel_delegation(self, remote_id: str) -> dict:
-        """POST /link/v1/delegations/{remote_id}/cancel -> same shape as get_delegation."""
-        return self._request("POST", f"/link/v1/delegations/{remote_id}/cancel")
-
 
 def client_for_workspace(db: Session, workspace_id: str, transport: httpx.BaseTransport | None = None) -> AffinebotClient:
     """Build a client from the workspace's stored link; AffinebotError(404, 'affinebot_not_linked') if none."""

@@ -158,7 +158,7 @@ def test_http_mcp_lists_feature_tools(monkeypatch) -> None:
         assert tools.status_code == 200, tools.text
         assert {tool["name"] for tool in tools.json()["result"]["tools"]} == {
             "publish_feature", "list_feature_updates", "get_feature_update", "add_feature_impact", "list_context_requests", "claim_context_request", "fulfill_context_request",
-            "report_tech_debt", "list_tech_debt", "get_tech_debt", "update_tech_debt", "list_projects",
+            "list_delegations", "claim_delegation", "report_delegation", "report_tech_debt", "list_tech_debt", "get_tech_debt", "update_tech_debt", "list_projects",
         }
 def test_agent_proxy_context_flow(tmp_path) -> None:
     test_engine = create_engine(f"sqlite:///{tmp_path / 'proxy.sqlite3'}", connect_args={"check_same_thread": False})

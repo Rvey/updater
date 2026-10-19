@@ -17,8 +17,6 @@ class Settings(BaseSettings):
     llm_model: str = "google/gemini-3.5-flash-lite"
     # Affinebot link (per-workspace credentials live in AffinebotLink; these are global knobs)
     affinebot_timeout_s: float = 10.0
-    affinebot_callback_secret: str = ""  # same value as Affinebot UPDATER_CALLBACK_SECRET
-    updater_public_url: str = ""  # public origin Affinebot calls back to
     updater_secret_key: str = ""  # optional; encrypts link secrets at rest (Fernet)
 
 

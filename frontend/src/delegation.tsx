@@ -21,12 +21,6 @@ export function canDelegateTask(task: Pick<Task, "external_id" | "repo_url">): b
 
 export function delegationErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.detail === "affinebot_not_linked")
-      return "Affinebot isn't linked to this workspace. Link it in Settings > Integrations first.";
-    if (err.detail === "affinebot_unreachable" || err.status === 502 || err.status === 504)
-      return "Couldn't reach Affinebot right now. Try again in a moment.";
-    if (err.detail === "updater_public_url_not_configured")
-      return "The updater's public URL isn't configured, so Affinebot can't report back. Ask an admin to set it.";
     if (err.status === 422 && /repo/i.test(err.detail)) return "This task has no GitHub repo to delegate.";
     return err.detail;
   }
@@ -84,7 +78,7 @@ export function useLatestDelegation(
   useEffect(() => {
     if (!id || !active) return;
     let dead = false;
-    const timer = window.setInterval(async () => {
+    const refresh = async () => {
       try {
         const next = await api<Delegation>(`/delegations/${id}`, token);
         if (dead) return;
@@ -92,10 +86,16 @@ export function useLatestDelegation(
       } catch {
         /* keep polling; transient */
       }
-    }, POLL_MS);
+    };
+    const timer = window.setInterval(refresh, POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       dead = true;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [token, taskId, id, active]);
 
@@ -160,8 +160,8 @@ export function DelegationBadge({ delegation }: { delegation: Delegation | null 
     );
   }
   const label: Record<DelegationStatus, string> = {
-    queued: "Queued",
-    running: "Claude is working",
+    queued: "Waiting for your agent",
+    running: "Your agent is working" + (delegation.claimed_by ? ` · ${delegation.claimed_by}` : ""),
     pr_opened: "PR opened",
     failed: "Failed",
     cancelled: "Cancelled",
@@ -199,7 +199,7 @@ export function DelegateDialog({
         className="tk-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="Delegate to Claude Code"
+        aria-label="Delegate to my agent"
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
@@ -210,14 +210,29 @@ export function DelegateDialog({
       >
         <div className="tk-modal-head">
           <div>
-            <div className="tk-eyebrow">CLAUDE CODE</div>
-            <h3>Delegate to Claude Code</h3>
+            <div className="tk-eyebrow">YOUR CODING AGENT</div>
+            <h3>Delegate to my agent</h3>
           </div>
           <button type="button" className="tk-icon-btn" onClick={onClose} aria-label="Close">
             <X size={16} />
           </button>
         </div>
         <form className="tk-form" onSubmit={submit}>
+          <p className="dg-explain">
+            The job runs on your own coding agent, on your machine, with your own credits.
+          </p>
+          <details className="dg-how">
+            <summary>How your agent picks it up</summary>
+            <ul>
+              <li>
+                Run <code>/updater-delegate</code> in the repo checkout
+              </li>
+              <li>
+                or keep <code>python3 updater-watch.py watch --auto</code> running to pick jobs up
+                automatically
+              </li>
+            </ul>
+          </details>
           <label className="tk-field">
             <span>
               Instruction <em>optional</em>
@@ -226,7 +241,7 @@ export function DelegateDialog({
               rows={4}
               autoFocus
               value={instruction}
-              placeholder="Anything Claude should know beyond the task description"
+              placeholder="Anything your agent should know beyond the task description"
               onChange={(e) => setInstruction(e.target.value)}
             />
           </label>
@@ -286,7 +301,7 @@ export function DelegateControl({
             setOpen(true);
           }}
         >
-          <Bot size={13} /> {retry ? "Retry with Claude Code" : "Delegate to Claude Code"}
+          <Bot size={13} /> {retry ? "Retry with my agent" : "Delegate to my agent"}
         </button>
       )}
       {!open && error && (

@@ -81,7 +81,7 @@ export function GitHubItemRow({
   importing: boolean;
   onImport: (item: GitHubItem) => void;
   onOpenTask?: (taskId: string) => void;
-  /** Slot for extra per-item actions (e.g. the "Delegate to Claude Code" button added by the next phase). */
+  /** Slot for extra per-item actions (e.g. the "Delegate to my agent" button). */
   actions?: ReactNode;
 }) {
   const st = itemState(item);

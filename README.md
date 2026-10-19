@@ -190,11 +190,7 @@ A workspace links to an Affinebot instance to load GitHub repos and delegate wor
 
    `owner` is the GitHub user or org where the Affinebot GitHub App is installed. The response contains the token (`abl_…`) once; Affinebot keeps only its hash. Revoke with `DELETE /link/admin/clients/<client_id>`.
 2. **Paste it in the updater.** As a workspace owner, open **Settings > Integrations** and enter `base_url`, `client_id` (the workspace id, prefilled) and `token`. The updater checks Affinebot and shows `active` or `error`. Members see the status read-only.
-3. **Shared callback secret.** Affinebot signs delegation callbacks, and the updater verifies them with one shared value:
-   - updater: `AFFINEBOT_CALLBACK_SECRET`
-   - Affinebot: `UPDATER_CALLBACK_SECRET` (the same value)
-4. **Public URL.** Set `UPDATER_PUBLIC_URL` on the updater to its public origin, without a trailing slash. Affinebot posts status to `{UPDATER_PUBLIC_URL}/api/delegations/{id}/status`.
-5. **Allowed origins.** On Affinebot, set `UPDATER_CALLBACK_ALLOWED_ORIGINS` to the updater origin (for example `https://api.example.com`). Affinebot rejects delegations whose callback origin is not listed.
+3. **Delegation runs on your own agent.** "Delegate to Claude Code" queues the task in the updater. Your own coding agent (Claude Code, Codex or OpenCode, connected over MCP with your API key) picks it up with `/updater-delegate` or `commands/updater-watch.py --auto`, opens the PR from your machine and reports back, so your credits are used. Affinebot is only used to list repos, issues and PRs.
 
 ## GitHub
 
@@ -206,7 +202,7 @@ Repos, issues and PRs come from the **Affinebot GitHub App**. The updater never 
 
 ## Delegating to Claude Code
 
-Any workspace member can delegate a task, usually an imported issue, to Claude Code from the task detail. The updater records the delegation, and Affinebot runs the work on its `worker-claude` service with `ANTHROPIC_API_KEY`.
+Any workspace member can delegate a task, usually an imported issue, from the task detail. The updater queues it for the delegating user's own coding agent (`list_delegations`, `claim_delegation`, `report_delegation` over MCP; `/updater-delegate` or `updater-watch.py --auto`), which branches `updater/delegation-<id8>`, opens the PR and reports back. Only the delegating user's agent can claim and report.
 
 ```
 queued → running → pr_opened     (task moves to review, tagged claude-code)
@@ -215,9 +211,9 @@ queued | running → cancelled     (set by the user; terminal)
 ```
 
 - Only one active (`queued` or `running`) delegation exists per task.
-- Each run has a per-job budget (`CLAUDE_CODE_BUDGET_USD`, default 2.00) and timeout (`CLAUDE_CODE_TIMEOUT_S`, default 1500). Affinebot's README lists the rest.
-- Status only moves forward. If a callback is lost, a queued or running delegation older than 60 seconds is refreshed from Affinebot when it is read.
-- **Sandbox caveat.** A run is a scrubbed subprocess, not a container. It gets a minimal environment (no GitHub token, no other secrets), read and edit tools only, plus a timeout and budget. It still shares the worker's filesystem and network, so keep the worker's secrets to a minimum. Container-per-job is not in v1.
+- A claim (`running`) can be taken over by the same user after 30 minutes. Cancel is local.
+- Status only moves forward. If the report is lost, the GitHub `pull_request` webhook for a branch named `updater/delegation-<id8>` marks the delegation `pr_opened`.
+- The task and issue text is handed to the agent as data; the agent runs with the user's own credentials and checkout.
 
 ## Configuration
 
@@ -247,13 +243,11 @@ LLM_MODEL=google/gemini-3.5-flash-lite
 
 | Variable | Purpose |
 | --- | --- |
-| `AFFINEBOT_CALLBACK_SECRET` | Same value as Affinebot's `UPDATER_CALLBACK_SECRET`. Verifies `X-Affinebot-Signature` on delegation callbacks. Empty = callbacks are rejected (`503`). |
-| `UPDATER_PUBLIC_URL` | Public origin of this API, no trailing slash. Used to build the callback URL. Empty = delegation returns `503`. |
 | `AFFINEBOT_TIMEOUT_S` | Timeout for calls to Affinebot (default `10`). |
 | `UPDATER_SECRET_KEY` | Optional. Encrypts stored Affinebot link tokens. Empty = tokens are stored as plain text. |
 | `GITHUB_WEBHOOK_SECRET` | Secret for the GitHub App webhook at `/api/github/webhook`. |
 
-Affinebot-side variables (`ANTHROPIC_API_KEY`, `UPDATER_CALLBACK_SECRET`, `UPDATER_CALLBACK_ALLOWED_ORIGINS`, `CLAUDE_CODE_*`) are listed in Affinebot's README.
+Affinebot-side variables are listed in Affinebot's README.
 
 ## Deploy
 

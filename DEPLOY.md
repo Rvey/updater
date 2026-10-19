@@ -20,8 +20,6 @@ This follows Octo Flow's Dokploy layout: one Compose application, separate publi
    OPENROUTER_API_KEY=
    LLM_MODEL=google/gemini-3.5-flash-lite
    # Affinebot and GitHub (see README: "Connecting Affinebot" and "GitHub")
-   UPDATER_PUBLIC_URL=https://api.example.com
-   AFFINEBOT_CALLBACK_SECRET=replace-with-affinebot-UPDATER_CALLBACK_SECRET
    AFFINEBOT_TIMEOUT_S=10
    # Recommended: encrypts stored Affinebot link tokens (empty = plain text)
    UPDATER_SECRET_KEY=replace-with-a-long-random-string
@@ -43,8 +41,7 @@ docker run --rm -v "$PWD/frontend":/app -w /app node:22-bookworm-slim npm instal
 
 The Affinebot link (base URL, client id and token) is entered per workspace in **Settings > Integrations**, not in Dokploy. Keep no GitHub token in Dokploy; repos and issues come from the Affinebot GitHub App.
 
-- `UPDATER_PUBLIC_URL` must be this API's public origin. Affinebot posts delegation status to it, so Affinebot's `UPDATER_CALLBACK_ALLOWED_ORIGINS` must include `https://api.example.com`.
-- `AFFINEBOT_CALLBACK_SECRET` must match Affinebot's `UPDATER_CALLBACK_SECRET`. Delegation callbacks fail closed until it is set.
+- Delegated tasks run on each user's own agent over MCP, so no callback URL or secret is needed.
 - In the GitHub App, set the webhook URL to `https://api.example.com/api/github/webhook`, with the same secret as `GITHUB_WEBHOOK_SECRET`. Subscribe to `issues` and `pull_request`.
 - The App needs Metadata: read, Issues: read & write, Pull requests: read & write and Contents: read & write. Re-approve after any permission change.
 

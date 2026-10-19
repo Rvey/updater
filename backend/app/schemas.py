@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl, SecretStr
 
@@ -574,3 +575,25 @@ class DelegationRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     finished_at: datetime | None = None
+    task_title: str | None = None
+    task_description: str | None = None
+    issue_url: str | None = None
+    suggested_branch: str | None = None
+    instruction: str = ""
+    base_branch: str | None = None
+    claimed_by: str | None = None
+    claimed_at: datetime | None = None
+
+
+class DelegationClaim(BaseModel):
+    agent: str | None = Field(default=None, max_length=100)
+
+
+class DelegationReport(BaseModel):
+    status: Literal["running", "pr_opened", "failed"]
+    branch: str | None = Field(default=None, max_length=255)
+    pr_url: str | None = Field(default=None, max_length=600)
+    pr_number: int | None = None
+    summary: str | None = Field(default=None, max_length=4000)
+    error: str | None = Field(default=None, max_length=4000)
+    repo_url: str | None = Field(default=None, max_length=600)

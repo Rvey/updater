@@ -735,8 +735,19 @@ function DelegationSection({
   const d = useLatestDelegation(token, taskId, true);
   return (
     <section className="tk-section">
-      <h3>Claude Code</h3>
+      <h3>Your coding agent</h3>
       <DelegateControl token={token} taskId={taskId} />
+      {d?.status === "queued" && (
+        <p className="dg-hint">
+          Open your agent in <code>{d.repo}</code> and run <code>/updater-delegate</code>
+          {d.suggested_branch && (
+            <>
+              {" "}
+              (suggested branch <code>{d.suggested_branch}</code>)
+            </>
+          )}
+        </p>
+      )}
       {d?.status === "failed" && d.error && <p className="dg-fail">{d.error}</p>}
       {d?.status === "pr_opened" && d.summary && <p className="dg-summary">{d.summary}</p>}
     </section>

@@ -162,7 +162,7 @@ class ContextRequest(Base):
 
 
 class Delegation(Base):
-    """One run of Claude Code (through Affinebot) on a task. Statuses only move forward."""
+    """One run of the assigning user's own coding agent on a task. Statuses only move forward."""
 
     __tablename__ = "delegations"
 
@@ -175,7 +175,8 @@ class Delegation(Base):
     instruction: Mapped[str] = mapped_column(Text, default="")
     base_branch: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     status: Mapped[str] = mapped_column(String(20), default="queued")  # queued|running|pr_opened|failed|cancelled
-    remote_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
+    claimed_by: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     branch: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     pr_url: Mapped[str | None] = mapped_column(String(600), nullable=True, default=None)
     pr_number: Mapped[int | None] = mapped_column(nullable=True, default=None)

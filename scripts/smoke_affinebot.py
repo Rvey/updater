@@ -13,9 +13,6 @@ Env overrides: UPDATER_DIR, AFFINEBOT_DIR, SMOKE_REDIS_DB.
 """
 from __future__ import annotations
 
-import asyncio
-import hashlib
-import hmac
 import json
 import os
 import shutil
@@ -41,7 +38,6 @@ AFFINEBOT_DIR = Path(os.environ.get("AFFINEBOT_DIR", "/Users/redouane/Documents/
 REDIS_DB = int(os.environ.get("SMOKE_REDIS_DB", "14"))
 OWNER, REPO = "acme", "widgets"
 ADMIN_TOKEN = "smoke-admin-" + uuid.uuid4().hex
-CB_SECRET = "smoke-callback-" + uuid.uuid4().hex
 
 results: list[tuple[str, bool, str]] = []
 procs: list[subprocess.Popen] = []
@@ -180,10 +176,6 @@ def finish(code=0) -> int:
     return code
 
 
-def sign(body: bytes) -> str:
-    return "sha256=" + hmac.new(CB_SECRET.encode(), body, hashlib.sha256).hexdigest()
-
-
 # ---------------------------------------------------------------- main flow
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="smoke-affinebot-"))
@@ -213,13 +205,11 @@ def main() -> int:
                   "DATA_DIR": str(tmp / "ab-data"), "GITHUB_APP_ID": "12345", "GITHUB_APP_PRIVATE_KEY_FILE": str(tmp / "app.pem"),
                   "GITHUB_API_URL": f"http://127.0.0.1:{gh_port}", "GOOGLE_SERVICE_ACCOUNT_FILE": str(tmp / "sa.json"),
                   "REDIS_URL": f"redis://localhost:6379/{REDIS_DB}", "AFFINEBOT_ADMIN_TOKEN": ADMIN_TOKEN,
-                  "UPDATER_CALLBACK_SECRET": CB_SECRET, "UPDATER_CALLBACK_ALLOWED_ORIGINS": up_url,
                   "ANTHROPIC_API_KEY": "sk-ant-smoke-not-real", "CHAT_VERIFY_REQUESTS": "true", "ALLOWED_REPO_OWNERS": ""}
         wd = tmp / "cwd"; wd.mkdir()  # cwd without a .env so repo .env files are not picked up
         spawn(["uv", "run", "--project", str(AFFINEBOT_DIR), "uvicorn", "affinebot.api:app", "--host", "127.0.0.1", "--port", str(ab_port)],
               ab_env, wd, tmp / "affinebot.log")
-        up_env = {**base_env, "DATABASE_URL": f"sqlite:///{tmp}/updater.db", "AFFINEBOT_CALLBACK_SECRET": CB_SECRET,
-                  "UPDATER_PUBLIC_URL": up_url, "AFFINEBOT_TIMEOUT_S": "10"}
+        up_env = {**base_env, "DATABASE_URL": f"sqlite:///{tmp}/updater.db", "AFFINEBOT_TIMEOUT_S": "10"}
         spawn(["uv", "run", "--project", str(UPDATER_DIR / "backend"), "uvicorn", "app.main:app", "--app-dir", str(UPDATER_DIR / "backend"), "--host", "127.0.0.1", "--port", str(up_port)],
               up_env, wd, tmp / "updater.log")
         wait_http(f"{ab_url}/healthz", procs[0], tmp / "affinebot.log")
@@ -284,57 +274,40 @@ def main() -> int:
         t1 = next((t for t in tasks if t["external_id"].endswith("#1")), None)
         step("6b. synced tasks exist", t1 is not None and len(tasks) == 2, f"external_ids={[t['external_id'] for t in tasks]} status(#1)={t1 and t1['status']}")
 
-        # 7 delegate
+        # 7 delegate: queued locally, no Affinebot involvement (the user's own agent runs it)
         r = up.post(f"/api/tasks/{t1['id']}/delegate", json={"instruction": "please fix", "base_branch": "develop"})
         d = r.json()
-        step("7. POST /api/tasks/{id}/delegate -> queued on Affinebot",
-             r.status_code == 201 and d.get("status") == "queued" and d.get("repo") == f"{OWNER}/{REPO}" and d.get("issue_number") == 1,
+        step("7. POST /api/tasks/{id}/delegate -> queued locally",
+             r.status_code == 201 and d.get("status") == "queued" and d.get("repo") == f"{OWNER}/{REPO}" and d.get("issue_number") == 1
+             and d.get("suggested_branch") == f"updater/delegation-{d['id'][:8]}" and d.get("base_branch") == "develop",
              f"-> {r.status_code} {json.dumps(d)}")
         did = d["id"]
-        # find the remote id from Affinebot's store (updater DelegationRead does not expose it)
-        from affinebot.config import Settings
-        from affinebot.delegation import post_callback
-        from affinebot.store import Store
-        store = Store(tmp / "ab-data" / "affinebot.db")
-        ref = store.get_job_result(f"delegation-ref:{wid}:{did}")
-        rec = store.get_job_result(f"delegation:{ref['remote_id']}") if ref else None
-        expected_cb = f"{up_url}/api/delegations/{did}/status"
-        step("7b. Affinebot stored delegation with contract callback_url", bool(rec) and rec["callback_url"] == expected_cb and rec["status"] == "queued",
-             f"remote_id={ref and ref['remote_id']} callback_url={rec and rec['callback_url']} (expected {expected_cb})")
-        remote_id = ref["remote_id"]
-        g = httpx.get(f"{ab_url}/link/v1/delegations/{remote_id}", headers={"Authorization": f"Bearer {token}", "X-Link-Client": wid}).json()
-        step("7c. GET /link/v1/delegations/{remote_id} shape", set(g) == {"status", "branch", "pr_url", "pr_number", "error", "summary"} and g["status"] == "queued", json.dumps(g))
-        step("7d. job enqueued in Redis (arq)", redis_cli("dbsize").split()[-1] != "0", f"redis db{REDIS_DB} dbsize={redis_cli('dbsize')} keys={redis_cli('keys', '*').replace(chr(10), ' ')[:200]}")
-        # idempotency: same delegation_id again -> same remote_id
-        again = httpx.post(f"{ab_url}/link/v1/delegations", headers={"Authorization": f"Bearer {token}", "X-Link-Client": wid}, json={
-            "delegation_id": did, "repo": f"{OWNER}/{REPO}", "issue_number": 1, "title": "t", "instruction": "i", "base_branch": None, "callback_url": expected_cb})
-        step("7e. POST delegations idempotent on delegation_id", again.status_code == 202 and again.json()["remote_id"] == remote_id, f"-> {again.status_code} {again.text}")
+        r = up.get("/api/delegations", params={"status": "queued", "repo": f"git@github.com:{OWNER}/{REPO}.git"})
+        step("7b. GET /api/delegations?status=queued&repo= lists it", r.status_code == 200 and [x["id"] for x in r.json()] == [did], f"-> {r.status_code} {r.text[:200]}")
 
-        # 8 callbacks
-        settings = Settings(_env_file=None, updater_callback_secret=CB_SECRET, updater_callback_allowed_origins=up_url)
-        ok = asyncio.run(post_callback(settings, rec, {"status": "running"}))
-        d = up.get(f"/api/delegations/{did}").json()
-        step("8a. Affinebot post_callback(running) -> updater", ok and d["status"] == "running", f"post_callback returned {ok}; updater delegation status={d['status']}")
+        # 8 the user's agent claims and reports over the updater API
+        r = up.post(f"/api/delegations/{did}/claim", json={"agent": "smoke-agent"})
+        d = r.json()
+        step("8a. claim -> running", r.status_code == 200 and d["status"] == "running" and d["claimed_by"] == "smoke-agent", f"-> {r.status_code} status={d.get('status')}")
+        r = up.post(f"/api/delegations/{did}/claim", json={"agent": "other"})
+        step("8b. second claim -> 409", r.status_code == 409, f"-> {r.status_code} {r.text}")
+        r = up.post(f"/api/delegations/{did}/report", json={"status": "running", "repo_url": f"https://github.com/{OWNER}/other"})
+        step("8c. wrong checkout -> 409", r.status_code == 409, f"-> {r.status_code} {r.text}")
+        r = up.post(f"/api/delegations/{did}/report", json={"status": "pr_opened", "pr_url": "https://github.com/evil/other/pull/1"})
+        step("8d. foreign pr_url -> 422", r.status_code == 422, f"-> {r.status_code} {r.text}")
         pr_url = f"https://github.com/{OWNER}/{REPO}/pull/77"
-        ok = asyncio.run(post_callback(settings, rec, {"status": "pr_opened", "branch": f"affinebot/claude-{remote_id[:8]}", "pr_url": pr_url, "pr_number": 77, "summary": "Fixed login"}))
-        d = up.get(f"/api/delegations/{did}").json()
+        r = up.post(f"/api/delegations/{did}/report", json={
+            "status": "pr_opened", "branch": d["suggested_branch"], "pr_url": pr_url, "pr_number": 77, "summary": "Fixed login",
+            "repo_url": f"https://github.com/{OWNER}/{REPO}.git"})
+        d = r.json()
         task = up.get(f"/api/tasks/{t1['id']}").json()
-        step("8b. Affinebot post_callback(pr_opened) -> delegation pr_opened, task -> review",
-             ok and d["status"] == "pr_opened" and d["pr_url"] == pr_url and d["pr_number"] == 77 and task["status"] == "review",
-             f"post_callback={ok}; delegation={json.dumps({k: d[k] for k in ('status', 'branch', 'pr_url', 'pr_number', 'summary')})}; task.status={task['status']} tags={task.get('tags')}")
-        # negative wire checks
-        body = json.dumps({"status": "failed", "error": "late"}).encode()
-        r = httpx.post(expected_cb, content=body, headers={"X-Affinebot-Signature": "sha256=" + "0" * 64, "Content-Type": "application/json"})
-        step("8c. bad signature -> 401", r.status_code == 401, f"-> {r.status_code} {r.text}")
-        r = httpx.post(expected_cb, content=body, headers={"X-Affinebot-Signature": sign(body), "Content-Type": "application/json"})
-        d = up.get(f"/api/delegations/{did}").json()
-        step("8d. late 'failed' after pr_opened ignored with 200", r.status_code == 200 and d["status"] == "pr_opened", f"-> {r.status_code}; status stays {d['status']}")
-        bad_pr = json.dumps({"status": "pr_opened", "pr_url": "https://github.com/evil/other/pull/1"}).encode()
-        r = httpx.post(f"{up_url}/api/delegations/{did}/status", content=bad_pr, headers={"X-Affinebot-Signature": sign(bad_pr), "Content-Type": "application/json"})
-        step("8e. foreign pr_url -> 422", r.status_code == 422, f"-> {r.status_code} {r.text}")
-        unk = json.dumps({"status": "running"}).encode()
-        r = httpx.post(f"{up_url}/api/delegations/{uuid.uuid4()}/status", content=unk, headers={"X-Affinebot-Signature": sign(unk), "Content-Type": "application/json"})
-        step("8f. unknown delegation id -> 404", r.status_code == 404, f"-> {r.status_code}")
+        step("8e. report pr_opened -> delegation pr_opened, task -> review",
+             r.status_code == 200 and d["status"] == "pr_opened" and d["pr_url"] == pr_url and d["pr_number"] == 77 and task["status"] == "review",
+             f"-> {r.status_code} delegation={json.dumps({k: d[k] for k in ('status', 'branch', 'pr_url', 'pr_number', 'summary')})}; task.status={task['status']} tags={task.get('tags')}")
+        r = up.post(f"/api/delegations/{did}/report", json={"status": "failed", "error": "late"})
+        step("8f. late 'failed' after pr_opened ignored with 200", r.status_code == 200 and r.json()["status"] == "pr_opened", f"-> {r.status_code}; status stays {r.json().get('status')}")
+        r = up.post(f"/api/delegations/{uuid.uuid4()}/report", json={"status": "running"})
+        step("8g. unknown delegation id -> 404", r.status_code == 404, f"-> {r.status_code}")
         step("fake GitHub saw App-auth flow", any("access_tokens" in l for l in gh_log) and any("installation/repositories" in l for l in gh_log) and any("/issues" in l for l in gh_log),
              f"{len(gh_log)} requests, distinct: {sorted(set(gh_log))}")
         return finish(0)

@@ -201,6 +201,14 @@ export type Delegation = {
   pr_number: number | null;
   error: string | null;
   summary: string | null;
+  claimed_by: string | null;
+  claimed_at: string | null;
+  task_title: string;
+  task_description: string | null;
+  issue_url: string | null;
+  suggested_branch: string | null;
+  instruction: string | null;
+  base_branch: string | null;
   created_at: string;
   updated_at: string;
   finished_at: string | null;

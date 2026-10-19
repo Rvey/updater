@@ -188,10 +188,6 @@ def test_client_for_workspace_not_linked(env) -> None:
 def test_client_error_mapping_and_methods(upstream) -> None:
     c = ab.AffinebotClient("https://bot.example.com/", CID, SECRET)
     assert c.health()["client"]["owner"] == "acme"
-    assert c.create_delegation({"delegation_id": "d"})["remote_id"] == "r1"
-    assert c.get_delegation("r1")["status"] == "running"
-    assert c.cancel_delegation("r1")["status"] == "running"
-    assert upstream.calls[-1].method == "POST" and upstream.calls[-1].url.path == "/link/v1/delegations/r1/cancel"
     for mode, status, detail in [("down", 502, "affinebot_unreachable"), ("401", 502, "affinebot_rejected"), ("500", 502, "affinebot_upstream")]:
         upstream.mode = mode
         with pytest.raises(ab.AffinebotError) as err:

@@ -1,7 +1,6 @@
-"""Delegating tasks to Claude Code via Affinebot: routes, signed callback, webhook hint, sync numbers filter."""
+"""Delegating tasks to the user's own agent: queue, claim, report, cancel, webhook hint, MCP tools; plus sync numbers filter."""
 import hashlib
 import hmac as hmac_mod
-import inspect
 import json
 from datetime import timedelta
 
@@ -11,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app import affinebot_client as ab
-from app import delegation_routes, main
+from app import main, mcp_server
 from app.config import get_settings
 from app.db import Base, Delegation, Task, now_utc
 from test_api import _register_account, _signed_in_client
@@ -19,7 +18,6 @@ from test_workspaces import H, workspaces_of
 
 SECRET = "abl_supersecretvalue123"
 CID = "33333333-3333-3333-3333-333333333333"
-CB_SECRET = "callback-secret"
 HEALTH = {"ok": True, "app": "affinebot", "version": "1", "github_app": True, "redis": True, "db": True,
           "client": {"client_id": CID, "owner": "o", "installation_id": 7}}
 
@@ -76,8 +74,6 @@ def env(tmp_path, monkeypatch, upstream):
     factory = sessionmaker(bind=engine)
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main, "SessionLocal", factory)
-    monkeypatch.setattr(get_settings(), "affinebot_callback_secret", CB_SECRET)
-    monkeypatch.setattr(get_settings(), "updater_public_url", "https://updater.example.com/")
     client = _signed_in_client(engine)
     with client:
         yield client, factory
@@ -104,72 +100,63 @@ def make_task(factory, project_id, **kw):
         return task.id
 
 
-def sign(body: bytes, secret=CB_SECRET) -> dict:
-    return {"X-Affinebot-Signature": "sha256=" + hmac_mod.new(secret.encode(), body, hashlib.sha256).hexdigest(),
-            "Content-Type": "application/json"}
-
-
-def callback(client, did, payload, secret=CB_SECRET):
-    body = json.dumps(payload).encode()
-    return client.post(f"/api/delegations/{did}/status", content=body, headers=sign(body, secret))
-
-
 def delegate(client, key, task_id, **body):
     return client.post(f"/api/tasks/{task_id}/delegate", json=body, headers=H(key))
 
 
-def test_delegate_creates_queued_row_and_calls_affinebot(env, upstream) -> None:
+def claim(client, key, did, agent="test-agent"):
+    return client.post(f"/api/delegations/{did}/claim", json={"agent": agent}, headers=H(key))
+
+
+def report(client, key, did, **body):
+    return client.post(f"/api/delegations/{did}/report", json=body, headers=H(key))
+
+
+PR = "https://github.com/o/r/pull/9"
+KEYS = {"id", "task_id", "project_id", "repo", "issue_number", "status", "branch", "pr_url", "pr_number", "error", "summary",
+        "created_at", "updated_at", "finished_at", "task_title", "task_description", "issue_url", "suggested_branch",
+        "instruction", "base_branch", "claimed_by", "claimed_at"}
+
+
+def test_delegate_creates_queued_row_without_affinebot(env, upstream, monkeypatch) -> None:
     client, factory = env
-    key, pid = account(client, "a@example.com")
+    key, pid = account(client, "a@example.com", link=False)  # no Affinebot link needed
     tid = make_task(factory, pid)
     r = delegate(client, key, tid, instruction="Be careful", base_branch="dev")
     assert r.status_code == 201, r.text
     data = r.json()
-    assert set(data) == {"id", "task_id", "project_id", "repo", "issue_number", "status", "branch", "pr_url",
-                         "pr_number", "error", "summary", "created_at", "updated_at", "finished_at"}
+    assert set(data) == KEYS
     assert data["status"] == "queued" and data["repo"] == "o/r" and data["issue_number"] == 5 and data["task_id"] == tid
-    post = upstream.delegation_posts()[0]
-    assert post.headers["authorization"] == f"Bearer {SECRET}" and post.headers["x-link-client"] == CID
-    sent = json.loads(post.content)
-    assert sent["delegation_id"] == data["id"] and sent["repo"] == "o/r" and sent["issue_number"] == 5
-    assert sent["base_branch"] == "dev" and sent["callback_url"] == f"https://updater.example.com/api/delegations/{data['id']}/status"
-    assert "Fix login" in sent["instruction"] and "Be careful" in sent["instruction"]
-    with factory() as db:
-        assert db.get(Delegation, data["id"]).remote_id == "rem-1"
-    # body is optional
-    assert client.post(f"/api/tasks/{tid}/delegate", headers=H(key)).status_code == 201
+    assert data["task_title"] == "Fix login" and data["task_description"] == "Users cannot log in"
+    assert data["suggested_branch"] == f"updater/delegation-{data['id'][:8]}" and data["base_branch"] == "dev"
+    assert data["issue_url"] == "https://github.com/o/r/issues/5" and data["claimed_by"] is None and data["claimed_at"] is None
+    assert "Fix login" in data["instruction"] and "Be careful" in data["instruction"]
+    assert upstream.calls == []  # no Affinebot call
+    assert client.post(f"/api/tasks/{tid}/delegate", headers=H(key)).json()["id"] == data["id"]  # body optional, one active per task
 
 
-def test_second_delegate_returns_active_row_then_new_after_terminal(env, upstream) -> None:
+def test_issue_url_uses_task_external_url(env) -> None:
     client, factory = env
-    key, pid = account(client, "a@example.com")
+    key, pid = account(client, "a@example.com", link=False)
+    tid = make_task(factory, pid, external_url="https://github.com/o/r/issues/5")
+    assert delegate(client, key, tid).json()["issue_url"] == "https://github.com/o/r/issues/5"
+
+
+def test_new_delegation_after_terminal_and_task_listing(env) -> None:
+    client, factory = env
+    key, pid = account(client, "a@example.com", link=False)
     tid = make_task(factory, pid)
     first = delegate(client, key, tid).json()
-    second = delegate(client, key, tid).json()
-    assert second["id"] == first["id"] and len(upstream.delegation_posts()) == 1
-    assert callback(client, first["id"], {"status": "failed", "error": "boom"}).status_code == 200
+    assert report(client, key, first["id"], status="failed", error="boom").status_code == 200
     third = delegate(client, key, tid).json()
     assert third["id"] != first["id"] and third["status"] == "queued"
     listed = client.get(f"/api/tasks/{tid}/delegations", headers=H(key)).json()
     assert [d["id"] for d in listed] == [third["id"], first["id"]]
 
 
-@pytest.mark.parametrize("mode", ["down", "500"])
-def test_affinebot_failure_stores_failed_and_returns_201(env, upstream, mode) -> None:
+def test_delegate_guards(env, monkeypatch) -> None:
     client, factory = env
-    key, pid = account(client, "a@example.com")
-    tid = make_task(factory, pid)
-    upstream.mode = mode
-    r = delegate(client, key, tid)
-    assert r.status_code == 201
-    assert r.json()["status"] == "failed" and r.json()["error"] and r.json()["finished_at"]
-    upstream.mode = "ok"
-    assert delegate(client, key, tid).json()["status"] == "queued"  # failed is not active
-
-
-def test_delegate_guards(env, upstream, monkeypatch) -> None:
-    client, factory = env
-    key, pid = account(client, "a@example.com")
+    key, pid = account(client, "a@example.com", link=False)
     other, _ = account(client, "b@example.com", link=False)
     with factory() as db:
         plain = Task(project_id=pid, title="No repo", status="backlog")
@@ -182,96 +169,180 @@ def test_delegate_guards(env, upstream, monkeypatch) -> None:
     assert r.status_code == 201 and r.json()["repo"] == "acme/web" and r.json()["issue_number"] is None
     tid = make_task(factory, pid)
     assert delegate(client, other, tid).status_code == 404
-    monkeypatch.setattr(get_settings(), "updater_public_url", "")
-    r = delegate(client, key, tid)
-    assert r.status_code == 503 and r.json()["detail"] == "updater_public_url_not_configured"
     monkeypatch.setattr(main.settings, "updater_token", "shared")
     assert delegate(client, "shared", tid).status_code == 403
 
 
-def test_no_link_is_409(env) -> None:
+def test_list_own_delegations_only_with_filters(env) -> None:
     client, factory = env
     key, pid = account(client, "a@example.com", link=False)
-    r = delegate(client, key, make_task(factory, pid))
-    assert r.status_code == 409 and r.json()["detail"] == "affinebot_not_linked"
+    other, opid = account(client, "b@example.com", link=False)
+    older = delegate(client, key, make_task(factory, pid)).json()
+    with factory() as db:
+        db.get(Delegation, older["id"]).created_at = now_utc() - timedelta(hours=1)
+        web = Task(project_id=pid, title="Web", status="backlog", repo_url="https://github.com/Acme/Web")
+        db.add(web)
+        db.commit()
+        web_id = web.id
+    newer = delegate(client, key, web_id).json()
+    theirs = delegate(client, other, make_task(factory, opid)).json()
+    got = client.get("/api/delegations", headers=H(key)).json()
+    assert [d["id"] for d in got] == [newer["id"], older["id"]]  # newest first, own only
+    assert [d["id"] for d in client.get("/api/delegations", headers=H(other)).json()] == [theirs["id"]]
+    for repo in ("acme/web", "Acme/Web", "https://github.com/Acme/Web.git", "git@github.com:acme/web.git"):
+        got = client.get("/api/delegations", params={"repo": repo}, headers=H(key)).json()
+        assert [d["id"] for d in got] == [newer["id"]], repo
+    claim(client, key, older["id"])
+    assert [d["id"] for d in client.get("/api/delegations", headers=H(key)).json()] == [newer["id"]]  # default status=queued
+    both = client.get("/api/delegations", params={"status": "queued,running"}, headers=H(key)).json()
+    assert {d["id"] for d in both} == {newer["id"], older["id"]}
+    assert client.get("/api/delegations", params={"status": "running"}, headers=H(key)).json()[0]["id"] == older["id"]
 
 
-def test_other_account_gets_404_everywhere(env) -> None:
+def test_claim_by_creator_other_user_and_stale(env) -> None:
     client, factory = env
-    key, pid = account(client, "a@example.com")
-    other, _ = account(client, "b@example.com")
-    tid = make_task(factory, pid)
-    did = delegate(client, key, tid).json()["id"]
-    assert client.get(f"/api/tasks/{tid}/delegations", headers=H(other)).status_code == 404
+    key, pid = account(client, "a@example.com", link=False)
+    other, _ = account(client, "b@example.com", link=False)
+    did = delegate(client, key, make_task(factory, pid)).json()["id"]
+    assert claim(client, other, did).status_code == 404
     assert client.get(f"/api/delegations/{did}", headers=H(other)).status_code == 404
-    assert client.post(f"/api/delegations/{did}/cancel", headers=H(other)).status_code == 404
-    assert client.get(f"/api/delegations/{did}", headers=H(key)).status_code == 200
-
-
-def test_callback_signature_and_flow(env) -> None:
-    client, factory = env
-    key, pid = account(client, "a@example.com")
-    tid = make_task(factory, pid)
-    did = delegate(client, key, tid).json()["id"]
-    url = f"/api/delegations/{did}/status"
-    body = json.dumps({"status": "running"}).encode()
-    assert client.post(url, content=body).status_code == 401  # missing
-    assert client.post(url, content=body, headers={"X-Affinebot-Signature": "sha256=" + "0" * 64}).status_code == 401
-    assert client.post(url, content=body, headers=sign(body, "wrong")).status_code == 401
-    # no Authorization header needed
-    r = callback(client, did, {"status": "running", "branch": "claude/abc"})
-    assert r.status_code == 200 and r.json()["status"] == "running" and r.json()["branch"] == "claude/abc"
-    pr = "https://github.com/o/r/pull/9"
-    r = callback(client, did, {"status": "pr_opened", "pr_url": pr, "pr_number": 9, "summary": "done"})
+    assert claim(client, key, "nope").status_code == 404
+    r = claim(client, key, did, agent="claude-code")
     assert r.status_code == 200
     out = r.json()
-    assert out["status"] == "pr_opened" and out["pr_url"] == pr and out["pr_number"] == 9 and out["finished_at"]
+    assert out["status"] == "running" and out["claimed_by"] == "claude-code" and out["claimed_at"]
+    assert claim(client, key, did).status_code == 409  # fresh claim
+    with factory() as db:
+        db.get(Delegation, did).claimed_at = now_utc() - timedelta(minutes=29)
+        db.commit()
+    assert claim(client, key, did).status_code == 409
+    with factory() as db:
+        db.get(Delegation, did).claimed_at = now_utc() - timedelta(minutes=31)
+        db.commit()
+    r = claim(client, key, did, agent="codex")
+    assert r.status_code == 200 and r.json()["claimed_by"] == "codex" and r.json()["status"] == "running"
+    # a finished delegation cannot be claimed again
+    assert report(client, key, did, status="failed", error="x").status_code == 200
+    assert claim(client, key, did).status_code == 409
+
+
+def test_env_token_cannot_claim_or_report(env, monkeypatch) -> None:
+    client, factory = env
+    key, pid = account(client, "a@example.com", link=False)
+    did = delegate(client, key, make_task(factory, pid)).json()["id"]
+    monkeypatch.setattr(main.settings, "updater_token", "shared")
+    assert claim(client, "shared", did).status_code == 403
+    assert report(client, "shared", did, status="running").status_code == 403
+    assert client.get("/api/delegations", headers=H("shared")).status_code == 403
+
+
+def test_report_flow_forward_only_and_task_to_review(env) -> None:
+    client, factory = env
+    key, pid = account(client, "a@example.com", link=False)
+    other, _ = account(client, "b@example.com", link=False)
+    tid = make_task(factory, pid)
+    did = delegate(client, key, tid).json()["id"]
+    assert report(client, other, did, status="running").status_code == 404  # creator only
+    assert claim(client, key, did).status_code == 200
+    r = report(client, key, did, status="running", branch="updater/delegation-x")
+    assert r.status_code == 200 and r.json()["status"] == "running"
+    r = report(client, key, did, status="pr_opened", branch=f"updater/delegation-{did[:8]}", pr_url=PR, pr_number=9,
+               summary="done", repo_url="git@github.com:O/R.git")
+    assert r.status_code == 200
+    out = r.json()
+    assert out["status"] == "pr_opened" and out["pr_url"] == PR and out["pr_number"] == 9 and out["finished_at"] and out["summary"] == "done"
     with factory() as db:
         task = db.get(Task, tid)
-        assert task.status == "review" and task.external_url == pr and "claude-code" in task.tags
-    # late running and duplicate pr_opened are ignored with 200
-    late = callback(client, did, {"status": "running"})
-    assert late.status_code == 200 and late.json()["status"] == "pr_opened"
-    assert callback(client, did, {"status": "failed", "error": "x"}).json()["status"] == "pr_opened"
-    assert callback(client, "nope", {"status": "running"}).status_code == 404
+        assert task.status == "review" and task.external_url == PR and "claude-code" in task.tags
+    # late running, duplicate pr_opened and failed are ignored with 200
+    assert report(client, key, did, status="running").json()["status"] == "pr_opened"
+    assert report(client, key, did, status="failed", error="x").json()["status"] == "pr_opened"
+    dup = report(client, key, did, status="pr_opened", pr_url="https://github.com/o/r/pull/10", pr_number=10)
+    assert dup.status_code == 200 and dup.json()["pr_url"] == PR
+    assert report(client, key, "nope", status="running").status_code == 404
 
 
-def test_callback_validation(env, monkeypatch) -> None:
+def test_report_keeps_existing_external_url(env) -> None:
     client, factory = env
-    key, pid = account(client, "a@example.com")
+    key, pid = account(client, "a@example.com", link=False)
+    tid = make_task(factory, pid, external_url="https://github.com/o/r/issues/5")
+    did = delegate(client, key, tid).json()["id"]
+    assert report(client, key, did, status="pr_opened", pr_url=PR, pr_number=9).status_code == 200
+    with factory() as db:
+        assert db.get(Task, tid).external_url == "https://github.com/o/r/issues/5"
+
+
+def test_report_validation(env) -> None:
+    client, factory = env
+    key, pid = account(client, "a@example.com", link=False)
     did = delegate(client, key, make_task(factory, pid)).json()["id"]
     for bad in ["https://evil.com/o/r/pull/1", "https://github.com/o/other/pull/1", "https://github.com/o/r/issues/1",
                 "http://github.com/o/r/pull/1", "https://github.com/o/r/pull/x"]:
-        assert callback(client, did, {"status": "pr_opened", "pr_url": bad}).status_code == 422, bad
-    assert callback(client, did, {"status": "pr_opened"}).status_code == 422
-    assert callback(client, did, {"status": "cancelled"}).status_code == 422
-    assert callback(client, did, {"status": "failed", "error": "e" * 5000}).status_code == 200
+        assert report(client, key, did, status="pr_opened", pr_url=bad).status_code == 422, bad
+    assert report(client, key, did, status="pr_opened").status_code == 422
+    assert report(client, key, did, status="cancelled").status_code == 422
+    assert report(client, key, did, status="bogus").status_code == 422
+    r = report(client, key, did, status="failed", error="e" * 3900)
+    assert r.status_code == 200
     with factory() as db:
         assert len(db.get(Delegation, did).error) == 2000
-    monkeypatch.setattr(get_settings(), "affinebot_callback_secret", "")
-    assert callback(client, did, {"status": "running"}).status_code == 503  # fails closed
 
 
-def test_signature_uses_constant_time_compare() -> None:
-    from app import github_sync
-    assert "compare_digest" in inspect.getsource(github_sync.verify_signature)
-    assert "verify_signature" in inspect.getsource(delegation_routes.delegation_callback)
-
-
-def test_webhook_branch_fills_lost_callback(env, monkeypatch) -> None:
+def test_report_wrong_checkout_is_409(env) -> None:
     client, factory = env
-    key, pid = account(client, "a@example.com")
-    tid = make_task(factory, pid)
-    did = delegate(client, key, tid).json()["id"]
+    key, pid = account(client, "a@example.com", link=False)
+    did = delegate(client, key, make_task(factory, pid)).json()["id"]
+    r = report(client, key, did, status="pr_opened", pr_url=PR, pr_number=9, repo_url="https://github.com/o/other.git")
+    assert r.status_code == 409 and "wrong checkout" in r.json()["detail"].lower()
+    assert client.get(f"/api/delegations/{did}", headers=H(key)).json()["status"] == "queued"
+    ok = report(client, key, did, status="running", repo_url="https://github.com/O/R/")
+    assert ok.status_code == 200 and ok.json()["status"] == "running"
+
+
+def test_cancel_is_local_and_terminal(env, upstream) -> None:
+    client, factory = env
+    key, pid = account(client, "a@example.com")  # linked, yet cancel must not call Affinebot
+    other, _ = account(client, "b@example.com", link=False)
+    did = delegate(client, key, make_task(factory, pid)).json()["id"]
+    assert client.post(f"/api/delegations/{did}/cancel", headers=H(other)).status_code == 404
+    before = len(upstream.calls)
+    r = client.post(f"/api/delegations/{did}/cancel", headers=H(key))
+    assert r.status_code == 200 and r.json()["status"] == "cancelled" and r.json()["finished_at"]
+    assert len(upstream.calls) == before
+    # cancelled is terminal: claim and reports cannot revive it; cancelling again is a no-op
+    assert claim(client, key, did).status_code == 409
+    assert report(client, key, did, status="running").json()["status"] == "cancelled"
+    assert report(client, key, did, status="pr_opened", pr_url=PR, pr_number=9).json()["status"] == "cancelled"
+    assert client.post(f"/api/delegations/{did}/cancel", headers=H(key)).json()["status"] == "cancelled"
+
+
+def test_old_callback_route_removed(env) -> None:
+    client, factory = env
+    key, pid = account(client, "a@example.com", link=False)
+    did = delegate(client, key, make_task(factory, pid)).json()["id"]
+    assert client.post(f"/api/delegations/{did}/status", json={"status": "running"}, headers=H(key)).status_code in (404, 405)
+    assert not hasattr(get_settings(), "affinebot_callback_secret") and not hasattr(get_settings(), "updater_public_url")
+
+
+def _webhook(client, monkeypatch, ref, repo="o/r", number=12):
     monkeypatch.setattr(main.settings, "github_webhook_secret", "whsec")
-    payload = {"action": "opened", "repository": {"full_name": "o/r"}, "pull_request": {
-        "number": 12, "title": "t", "body": "", "state": "open", "html_url": "https://github.com/o/r/pull/12",
-        "head": {"ref": "affinebot/claude-rem-1"}}}
+    payload = {"action": "opened", "repository": {"full_name": repo}, "pull_request": {
+        "number": number, "title": "t", "body": "", "state": "open", "html_url": f"https://github.com/{repo}/pull/{number}",
+        "head": {"ref": ref}}}
     body = json.dumps(payload).encode()
     sig = "sha256=" + hmac_mod.new(b"whsec", body, hashlib.sha256).hexdigest()
-    r = client.post("/api/github/webhook", content=body, headers={"x-hub-signature-256": sig, "x-github-event": "pull_request"})
+    return client.post("/api/github/webhook", content=body, headers={"x-hub-signature-256": sig, "x-github-event": "pull_request"})
+
+
+def test_webhook_branch_fills_lost_report(env, monkeypatch) -> None:
+    client, factory = env
+    key, pid = account(client, "a@example.com", link=False)
+    tid = make_task(factory, pid)
+    d = delegate(client, key, tid).json()
+    claim(client, key, d["id"])
+    r = _webhook(client, monkeypatch, d["suggested_branch"])
     assert r.status_code == 200, r.text
-    got = client.get(f"/api/delegations/{did}", headers=H(key)).json()
+    got = client.get(f"/api/delegations/{d['id']}", headers=H(key)).json()
     assert got["status"] == "pr_opened" and got["pr_url"] == "https://github.com/o/r/pull/12" and got["pr_number"] == 12
     with factory() as db:
         assert db.get(Task, tid).status == "review"
@@ -279,79 +350,35 @@ def test_webhook_branch_fills_lost_callback(env, monkeypatch) -> None:
 
 def test_webhook_ignores_unrelated_branch(env, monkeypatch) -> None:
     client, factory = env
-    key, pid = account(client, "a@example.com")
+    key, pid = account(client, "a@example.com", link=False)
     did = delegate(client, key, make_task(factory, pid)).json()["id"]
-    monkeypatch.setattr(main.settings, "github_webhook_secret", "whsec")
-    payload = {"action": "opened", "repository": {"full_name": "o/r"}, "pull_request": {
-        "number": 12, "title": "t", "body": "", "state": "open", "html_url": "https://github.com/o/r/pull/12",
-        "head": {"ref": "affinebot/claude-zzzzzzzz"}}}
-    body = json.dumps(payload).encode()
-    sig = "sha256=" + hmac_mod.new(b"whsec", body, hashlib.sha256).hexdigest()
-    client.post("/api/github/webhook", content=body, headers={"x-hub-signature-256": sig, "x-github-event": "pull_request"})
+    for ref in ("updater/delegation-zzzzzzzz", "affinebot/claude-" + did[:8], "feature/x"):
+        assert _webhook(client, monkeypatch, ref).status_code == 200
+    assert client.get(f"/api/delegations/{did}", headers=H(key)).json()["status"] == "queued"
+    assert _webhook(client, monkeypatch, f"updater/delegation-{did[:8]}", repo="o/elsewhere").status_code == 200
     assert client.get(f"/api/delegations/{did}", headers=H(key)).json()["status"] == "queued"
 
 
-def test_lazy_poll_refresh_after_60s(env, upstream) -> None:
-    client, factory = env
-    key, pid = account(client, "a@example.com")
-    did = delegate(client, key, make_task(factory, pid)).json()["id"]
-    gets = lambda: [c for c in upstream.calls if c.method == "GET" and c.url.path == "/link/v1/delegations/rem-1"]  # noqa: E731
-    assert client.get(f"/api/delegations/{did}", headers=H(key)).json()["status"] == "queued"
-    assert gets() == []  # fresh: no poll
-    with factory() as db:
-        db.get(Delegation, did).updated_at = now_utc() - timedelta(seconds=120)
-        db.commit()
-    assert client.get(f"/api/delegations/{did}", headers=H(key)).json()["status"] == "running"
-    assert len(gets()) == 1
-    client.get(f"/api/delegations/{did}", headers=H(key))
-    assert len(gets()) == 1  # throttled after a poll
-    # Affinebot errors are swallowed
-    with factory() as db:
-        db.get(Delegation, did).updated_at = now_utc() - timedelta(seconds=120)
-        db.commit()
-    upstream.mode = "down"
-    assert client.get(f"/api/delegations/{did}", headers=H(key)).status_code == 200
+def test_mcp_delegation_tools(monkeypatch) -> None:
+    import asyncio
 
+    calls = []
 
-def test_lazy_poll_rejects_bad_pr_url_and_applies_good(env, upstream) -> None:
-    client, factory = env
-    key, pid = account(client, "a@example.com")
-    tid = make_task(factory, pid)
-    did = delegate(client, key, tid).json()["id"]
+    async def fake(method, path, payload=None, authorization=""):
+        calls.append((method, path, payload))
+        return [{"id": "d1"}] if method == "GET" else {"id": "d1", "status": "running"}
 
-    def age():
-        with factory() as db:
-            db.get(Delegation, did).updated_at = now_utc() - timedelta(seconds=120)
-            db.commit()
-
-    upstream.remote = {**upstream.remote, "status": "pr_opened", "pr_url": "https://evil.com/x", "pr_number": 1}
-    age()
-    assert client.get(f"/api/delegations/{did}", headers=H(key)).json()["status"] == "queued"
-    upstream.remote["pr_url"] = "https://github.com/o/r/pull/3"
-    age()
-    assert client.get(f"/api/delegations/{did}", headers=H(key)).json()["status"] == "pr_opened"
-    with factory() as db:
-        assert db.get(Task, tid).status == "review"
-
-
-def test_cancel(env, upstream) -> None:
-    client, factory = env
-    key, pid = account(client, "a@example.com")
-    did = delegate(client, key, make_task(factory, pid)).json()["id"]
-    r = client.post(f"/api/delegations/{did}/cancel", headers=H(key))
-    assert r.status_code == 200 and r.json()["status"] == "cancelled" and r.json()["finished_at"]
-    assert any(c.url.path == "/link/v1/delegations/rem-1/cancel" for c in upstream.calls)
-    # cancelled is terminal: callbacks cannot revive it; cancelling again is a no-op
-    assert callback(client, did, {"status": "running"}).json()["status"] == "cancelled"
-    assert client.post(f"/api/delegations/{did}/cancel", headers=H(key)).json()["status"] == "cancelled"
-
-
-def test_cancel_when_affinebot_down(env, upstream) -> None:
-    client, factory = env
-    key, pid = account(client, "a@example.com")
-    did = delegate(client, key, make_task(factory, pid)).json()["id"]
-    upstream.mode = "down"
-    assert client.post(f"/api/delegations/{did}/cancel", headers=H(key)).json()["status"] == "cancelled"
+    monkeypatch.setattr(mcp_server, "api_request", fake)
+    out = asyncio.run(mcp_server.list_delegations(repo="https://github.com/o/r"))
+    assert out == {"count": 1, "delegations": [{"id": "d1"}]}
+    assert calls[0] == ("GET", "/api/delegations?status=queued&repo=https%3A%2F%2Fgithub.com%2Fo%2Fr", None)
+    asyncio.run(mcp_server.claim_delegation("d1", agent="claude"))
+    assert calls[1] == ("POST", "/api/delegations/d1/claim", {"agent": "claude"})
+    asyncio.run(mcp_server.report_delegation("d1", "pr_opened", branch="b", pr_url=PR, pr_number=9, summary="s", repo_url="u"))
+    assert calls[2] == ("POST", "/api/delegations/d1/report", {
+        "status": "pr_opened", "branch": "b", "pr_url": PR, "pr_number": 9, "summary": "s", "error": None, "repo_url": "u"})
+    asyncio.run(mcp_server.report_delegation("d1", "failed", error="boom"))
+    assert calls[3][2] == {"status": "failed", "branch": None, "pr_url": None, "pr_number": None, "summary": None, "error": "boom", "repo_url": None}
 
 
 def test_sync_numbers_filter_and_early_stop(env, upstream) -> None:
