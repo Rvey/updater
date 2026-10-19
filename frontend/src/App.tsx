@@ -27,6 +27,8 @@ import {
   Menu,
   MessageCircle,
   Moon,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   Search,
   Settings2,
@@ -1060,6 +1062,28 @@ function WorkspaceApp() {
   const [saving, setSaving] = useState(false);
   const [mobileDetail, setMobileDetail] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
+  const [contextHidden, setContextHidden] = useState(() => {
+    try {
+      return localStorage.getItem("updater-context-hidden") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("updater-context-hidden", contextHidden ? "1" : "0");
+    } catch {
+      /* storage unavailable; the toggle still works for this visit */
+    }
+  }, [contextHidden]);
+  useEffect(() => {
+    if (!mobileNav) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileNav(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobileNav]);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     try {
       const saved = localStorage.getItem("updater-theme");
@@ -1495,6 +1519,7 @@ function WorkspaceApp() {
             WORKSPACE <ChevronDown size={13} />
           </div>
         )}
+        <div className="sidebar-scroll">
         <nav className="primary-nav" aria-label="Main navigation">
           <button
             className={
@@ -1581,6 +1606,7 @@ function WorkspaceApp() {
             <p className="no-repos">Your repos will appear here.</p>
           )}
         </nav>
+        </div>
         <div className="sidebar-bottom">
           <div className="sidebar-rule" />
           {activeWorkspace && (
@@ -1605,6 +1631,9 @@ function WorkspaceApp() {
           </div>
         </div>
       </aside>
+      {mobileNav && (
+        <div className="sidebar-backdrop" onClick={() => setMobileNav(false)} aria-hidden="true" />
+      )}
       <main className={`workspace ${mobileDetail ? "show-mobile-detail" : ""}`}>
         <header className="topbar">
           <button
@@ -1644,6 +1673,17 @@ function WorkspaceApp() {
                 day: "numeric",
               })}
             </span>
+            {(view === "updates" || view === "questions") && (
+              <button
+                className="icon-button context-toggle"
+                onClick={() => setContextHidden((value) => !value)}
+                aria-pressed={!contextHidden}
+                aria-label={contextHidden ? "Show context panel" : "Hide context panel"}
+                title={contextHidden ? "Show context panel" : "Hide context panel"}
+              >
+                {contextHidden ? <PanelRightOpen size={17} /> : <PanelRightClose size={17} />}
+              </button>
+            )}
             <button
               className="icon-button theme-toggle"
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -1655,7 +1695,7 @@ function WorkspaceApp() {
             <div className="avatar">{(accountEmail?.[0] || "U").toUpperCase()}</div>
           </div>
         </header>
-        <div className="workspace-body">
+        <div className={`workspace-body ${contextHidden ? "context-hidden" : ""}`}>
           {view === "members" && activeWorkspace ? (
             <MembersPage
               token={token}
@@ -1772,6 +1812,7 @@ function WorkspaceApp() {
                     onClick={() => {
                       setSelectedId(item.id);
                       setMobileDetail(true);
+                      setContextHidden(false);
                     }}
                   >
                     <div className="row-top">

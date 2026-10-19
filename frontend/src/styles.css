@@ -71,6 +71,8 @@ a {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
 }
 .brand {
   display: inline-flex;
@@ -135,10 +137,14 @@ a {
   display: grid;
   gap: 4px;
 }
-.repo-nav {
+.sidebar-scroll {
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  margin: 0 -6px;
+  padding: 0 6px 12px;
 }
 .sidebar-bottom {
   flex-shrink: 0;
@@ -1706,6 +1712,18 @@ a {
 .mobile-back {
   display: none;
 }
+.workspace-body.context-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
+.workspace-body.context-hidden .detail-panel {
+  display: none;
+}
+.workspace-body.context-hidden .feed-panel {
+  border-right: 0;
+}
+.sidebar-backdrop {
+  display: none;
+}
 
 @media (min-width: 1450px) {
   .workspace-body {
@@ -1735,7 +1753,7 @@ a {
     flex-basis: 198px;
   }
   .workspace-body {
-    grid-template-columns: minmax(330px, 47%) minmax(390px, 53%);
+    grid-template-columns: minmax(0, 47%) minmax(0, 53%);
   }
   .feed-heading {
     padding-left: 26px;
@@ -1759,7 +1777,7 @@ a {
     padding-right: 32px;
   }
 }
-@media (max-width: 850px) {
+@media (max-width: 960px) {
   .sidebar {
     width: 198px;
     flex-basis: 198px;
@@ -1767,6 +1785,9 @@ a {
   .workspace-body {
     display: block;
     overflow: hidden;
+  }
+  .context-toggle {
+    display: none;
   }
   .feed-panel {
     height: 100%;
@@ -1811,6 +1832,15 @@ a {
   }
   .sidebar.mobile-open {
     transform: translateX(0);
+    z-index: 40;
+  }
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: rgba(12, 14, 10, 0.45);
+    animation: backdrop-in 0.2s ease-out;
   }
   .mobile-close,
   .mobile-menu {
@@ -1862,6 +1892,11 @@ a {
   .form-grid {
     grid-template-columns: 1fr;
     gap: 0;
+  }
+}
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {

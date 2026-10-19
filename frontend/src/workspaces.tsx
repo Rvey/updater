@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -91,6 +91,22 @@ export function WorkspaceSwitcher({
   onOpenMembers: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
   const [creating, setCreating] = useState<"workspace" | "project" | null>(null);
   const [name, setName] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
@@ -126,7 +142,7 @@ export function WorkspaceSwitcher({
   };
 
   return (
-    <div className="ws-switcher">
+    <div className="ws-switcher" ref={rootRef}>
       <button
         className="ws-trigger"
         onClick={() => setOpen((value) => !value)}

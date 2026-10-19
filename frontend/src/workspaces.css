@@ -2,6 +2,8 @@
 .ws-switcher {
   margin: 61px 12px 13px;
   position: relative;
+  flex-shrink: 0;
+  z-index: 15;
 }
 .ws-trigger {
   width: 100%;
@@ -43,13 +45,19 @@
   color: #587d18;
 }
 .ws-panel {
-  margin-top: 6px;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: #f9f9f7;
+  box-shadow: 0 12px 28px rgba(25, 32, 21, 0.14);
   border: 1px solid #e6e6df;
   border-radius: 9px;
   padding: 6px;
   display: grid;
   gap: 2px;
-  max-height: 340px;
+  max-height: min(340px, 60vh);
   overflow-y: auto;
 }
 .ws-heading {
@@ -273,6 +281,8 @@
 .dark .ws-trigger,
 .dark .ws-panel {
   border-color: #262626;
+  background: #1c1c1c;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
 }
 .dark .ws-trigger {
   color: #e9ede4;

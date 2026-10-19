@@ -557,6 +557,14 @@
   }
 }
 @media (max-width: 600px) {
+  .settings-rail {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow-x: visible;
+  }
+  .settings-rail button {
+    min-width: 0;
+  }
   .settings-key-row,
   .settings-agent-row {
     flex-wrap: wrap;
