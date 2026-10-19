@@ -250,6 +250,8 @@ a {
 }
 .sidebar-bottom button {
   text-align: left;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .sidebar-bottom button:hover {
   background: #eeefea;

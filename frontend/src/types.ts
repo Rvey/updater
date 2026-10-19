@@ -332,3 +332,12 @@ export type AffinebotLink = {
   last_checked_at: string | null;
   last_error: string | null;
 };
+
+export type AffinebotOwner = { owner: string; installed: boolean };
+
+export type AffinebotConfig = {
+  managed: boolean;
+  base_url: string | null;
+  owners: AffinebotOwner[];
+  error?: string;
+};

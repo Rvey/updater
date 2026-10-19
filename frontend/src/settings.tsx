@@ -15,7 +15,7 @@ import {
   UserRound,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { AffinebotLink, Update, Workspace } from "./types";
+import type { AffinebotConfig, AffinebotLink, Update, Workspace } from "./types";
 import { Button } from "./components/ui/button";
 import "./settings.css";
 
@@ -656,6 +656,10 @@ function affinebotMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.detail === "affinebot_unreachable")
       return "Could not reach Affinebot. Check the base URL and that the server is running.";
+    if (err.detail === "owner_not_allowed")
+      return "Affinebot does not allow that GitHub org for this server. Pick another org or ask the operator.";
+    if (err.detail === "github_app_not_installed")
+      return "The Affinebot GitHub App is not installed on that org. Install it on GitHub, then try again.";
     if (err.detail === "affinebot_rejected")
       return "Affinebot rejected the client id or secret. Ask the operator to mint a new client.";
     if (err.status === 403) return "Only workspace owners can change the Affinebot link.";
@@ -686,8 +690,28 @@ function AffinebotCard({ token, workspace }: { token: string; workspace: Workspa
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [config, setConfig] = useState<AffinebotConfig | null>(null);
+  const [pickedOwner, setPickedOwner] = useState("");
+  const [changing, setChanging] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+    createApi(token)
+      .get<AffinebotConfig>("/affinebot/config")
+      .then((res) => {
+        if (!cancelled) setConfig(res);
+      })
+      .catch(() => {
+        if (!cancelled) setConfig({ managed: false, base_url: null, owners: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    setChanging(false);
+    setPickedOwner("");
     setLink(null);
     setLoaded(false);
     setError("");
@@ -748,6 +772,29 @@ function AffinebotCard({ token, workspace }: { token: string; workspace: Workspa
       });
   };
 
+  const connect = (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    if (!pickedOwner) {
+      setError("Pick a GitHub org first.");
+      return;
+    }
+    setBusy(true);
+    createApi(token)
+      .post<AffinebotLink>(`/workspaces/${workspace.id}/affinebot/connect`, { owner: pickedOwner })
+      .then((res) => {
+        setLink(res);
+        setBaseUrl(res.base_url);
+        setClientId(res.client_id);
+        setChanging(false);
+        setPickedOwner("");
+        setSuccess(res.status === "active" ? "Connected." : "Saved.");
+      })
+      .catch((err) => setError(affinebotMessage(err)))
+      .finally(() => setBusy(false));
+  };
+
   const check = () => {
     setError("");
     setSuccess("");
@@ -779,14 +826,49 @@ function AffinebotCard({ token, workspace }: { token: string; workspace: Workspa
       .finally(() => setBusy(false));
   };
 
+  const managed = !!config?.managed;
+  const ownerPicker = (
+    <form onSubmit={connect}>
+      <div className="settings-form-grid">
+        <label className="settings-field full">
+          <span>GitHub org</span>
+          <select value={pickedOwner} onChange={(e) => setPickedOwner(e.target.value)} disabled={busy}>
+            <option value="">Select an org…</option>
+            {(config?.owners ?? []).map((o) => (
+              <option key={o.owner} value={o.owner} disabled={!o.installed}>
+                {o.owner}
+                {o.installed ? "" : " (App not installed)"}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {config?.error && (
+        <div className="settings-feedback error">
+          <CircleAlert size={14} /> {affinebotMessage(new ApiError(502, config.error))}
+        </div>
+      )}
+      <div className="settings-actions">
+        <Button type="submit" className="button primary" disabled={busy || !pickedOwner}>
+          {busy ? "Working…" : "Connect"}
+        </Button>
+        {changing && (
+          <Button type="button" className="button" variant="outline" disabled={busy} onClick={() => setChanging(false)}>
+            Cancel
+          </Button>
+        )}
+      </div>
+    </form>
+  );
+
   return (
     <section className="settings-card" aria-labelledby="settings-affinebot-title">
       <CardHead
         icon={Link2}
         title="Affinebot"
-        description={`Link "${workspace.name}" to an Affinebot instance to browse GitHub repos and delegate work.`}
+        description={`Link "${workspace.name}" to GitHub through Affinebot to browse repos, issues and pull requests.`}
       />
-      {!loaded ? (
+      {!loaded || !config ? (
         <p className="settings-hint">Loading…</p>
       ) : (
         <>
@@ -798,22 +880,28 @@ function AffinebotCard({ token, workspace }: { token: string; workspace: Workspa
                   <span className={"settings-key-badge " + link.status}>{link.status}</span>
                 </dd>
               </div>
-              <div>
-                <dt>Base URL</dt>
-                <dd>{link.base_url}</dd>
-              </div>
-              <div>
-                <dt>Client id</dt>
-                <dd>{link.client_id}</dd>
-              </div>
+              {!managed && (
+                <>
+                  <div>
+                    <dt>Base URL</dt>
+                    <dd>{link.base_url}</dd>
+                  </div>
+                  <div>
+                    <dt>Client id</dt>
+                    <dd>{link.client_id}</dd>
+                  </div>
+                </>
+              )}
               <div>
                 <dt>GitHub owner</dt>
                 <dd>{link.github_owner || "—"}</dd>
               </div>
-              <div>
-                <dt>Installation id</dt>
-                <dd>{link.installation_id ?? "—"}</dd>
-              </div>
+              {!managed && (
+                <div>
+                  <dt>Installation id</dt>
+                  <dd>{link.installation_id ?? "—"}</dd>
+                </div>
+              )}
               <div>
                 <dt>Last checked</dt>
                 <dd>{relativeTime(link.last_checked_at)}</dd>
@@ -825,6 +913,15 @@ function AffinebotCard({ token, workspace }: { token: string; workspace: Workspa
                 </div>
               )}
             </dl>
+          ) : managed ? (
+            <div className="settings-note">
+              <ShieldCheck size={16} />
+              <span>
+                {isOwner
+                  ? "Not linked. Pick the GitHub org this workspace should use."
+                  : "Ask a workspace owner to connect GitHub."}
+              </span>
+            </div>
           ) : (
             <div className="settings-note">
               <ShieldCheck size={16} />
@@ -835,13 +932,27 @@ function AffinebotCard({ token, workspace }: { token: string; workspace: Workspa
               </span>
             </div>
           )}
-          {!link && (
+          {managed && isOwner && (!link || changing) && ownerPicker}
+          {managed && isOwner && link && !changing && (
+            <div className="settings-actions">
+              <Button type="button" className="button" variant="outline" disabled={busy} onClick={check}>
+                <RefreshCw size={14} /> Check connection
+              </Button>
+              <Button type="button" className="button" variant="outline" disabled={busy} onClick={() => setChanging(true)}>
+                Change org
+              </Button>
+              <Button type="button" className="button" variant="destructive" disabled={busy} onClick={disconnect}>
+                Disconnect
+              </Button>
+            </div>
+          )}
+          {!managed && !link && (
             <div className="settings-url-row">
               <input readOnly value={workspace.id} aria-label="Workspace id" />
               <CopyChip value={workspace.id} label="workspace id" />
             </div>
           )}
-          {isOwner && (
+          {!managed && isOwner && (
             <form onSubmit={save}>
               <div className="settings-form-grid">
                 <label className="settings-field full">

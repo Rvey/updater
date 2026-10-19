@@ -219,6 +219,25 @@
     border-color 0.15s,
     box-shadow 0.15s;
 }
+.settings-field select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--st-border);
+  border-radius: 8px;
+  background: var(--st-raised);
+  color: var(--st-text);
+  padding: 10px 11px;
+  font-size: 13px;
+  outline: 0;
+}
+.settings-field select:focus {
+  border-color: var(--st-accent);
+  box-shadow: 0 0 0 3px rgba(165, 229, 60, 0.22);
+}
+.settings-field select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .settings-field input:focus {
   border-color: var(--st-accent);
   box-shadow: 0 0 0 3px rgba(165, 229, 60, 0.22);

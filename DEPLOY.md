@@ -21,6 +21,9 @@ This follows Octo Flow's Dokploy layout: one Compose application, separate publi
    LLM_MODEL=google/gemini-3.5-flash-lite
    # Affinebot and GitHub (see README: "Connecting Affinebot" and "GitHub")
    AFFINEBOT_TIMEOUT_S=10
+   # One-click linking: each workspace owner picks a GitHub org in Settings > Integrations
+   AFFINEBOT_URL=https://affinebot.example.com
+   AFFINEBOT_ADMIN_TOKEN=replace-with-affinebots-admin-token
    # Recommended: encrypts stored Affinebot link tokens (empty = plain text)
    UPDATER_SECRET_KEY=replace-with-a-long-random-string
    GITHUB_WEBHOOK_SECRET=replace-with-the-github-app-webhook-secret
@@ -39,7 +42,7 @@ docker run --rm -v "$PWD/frontend":/app -w /app node:22-bookworm-slim npm instal
 
 ### Affinebot and GitHub
 
-The Affinebot link (base URL, client id and token) is entered per workspace in **Settings > Integrations**, not in Dokploy. Keep no GitHub token in Dokploy; repos and issues come from the Affinebot GitHub App.
+Set `AFFINEBOT_URL` and `AFFINEBOT_ADMIN_TOKEN` in Dokploy; then each workspace owner picks a GitHub org in **Settings > Integrations** and clicks **Connect**, with no ids or tokens to copy. Without them (self-hosted fallback) owners paste a base URL, client id and token there instead. Keep no GitHub token in Dokploy; repos and issues come from the Affinebot GitHub App.
 
 - Delegated tasks run on each user's own agent over MCP, so no callback URL or secret is needed.
 - In the GitHub App, set the webhook URL to `https://api.example.com/api/github/webhook`, with the same secret as `GITHUB_WEBHOOK_SECRET`. Subscribe to `issues` and `pull_request`.

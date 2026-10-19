@@ -180,16 +180,10 @@ Data is scoped to a **workspace**. Sign-up creates a default workspace with a `G
 
 A workspace links to an Affinebot instance to load GitHub repos and delegate work. The link is per workspace, with one GitHub owner per link in v1.
 
-1. **Mint a client (Affinebot operator).** Use the workspace id as `client_id`:
+1. **Operator, once.** Set `AFFINEBOT_URL` and `AFFINEBOT_ADMIN_TOKEN` (Affinebot's admin token) on the updater API. This turns on managed mode; the admin token stays on the server and is never sent to the browser.
+2. **Workspace owner, one click.** Open **Settings > Integrations**, pick a GitHub org from the dropdown (orgs without the Affinebot GitHub App are disabled) and click **Connect**. The updater mints a client for the workspace, stores the token encrypted and checks the link. Owners can **Change org** (this rotates the credential) or **Disconnect** (this also revokes the client on Affinebot). Members see the status read-only.
 
-   ```bash
-   curl -X POST https://$DOMAIN/link/admin/clients \
-     -H "Authorization: Bearer $AFFINEBOT_ADMIN_TOKEN" -H 'Content-Type: application/json' \
-     -d '{"client_id":"<workspace-uuid>","label":"My workspace","owner":"acme"}'
-   ```
-
-   `owner` is the GitHub user or org where the Affinebot GitHub App is installed. The response contains the token (`abl_…`) once; Affinebot keeps only its hash. Revoke with `DELETE /link/admin/clients/<client_id>`.
-2. **Paste it in the updater.** As a workspace owner, open **Settings > Integrations** and enter `base_url`, `client_id` (the workspace id, prefilled) and `token`. The updater checks Affinebot and shows `active` or `error`. Members see the status read-only.
+   Self-hosted without managed mode: leave those variables empty, mint a client yourself with `POST /link/admin/clients` (workspace id as `client_id`) and paste `base_url`, `client_id` and the token into the same card.
 3. **Delegation runs on your own agent.** "Delegate to Claude Code" queues the task in the updater. Your own coding agent (Claude Code, Codex or OpenCode, connected over MCP with your API key) picks it up with `/updater-delegate` or `commands/updater-watch.py --auto`, opens the PR from your machine and reports back, so your credits are used. Affinebot is only used to list repos, issues and PRs.
 
 ## GitHub
@@ -243,6 +237,8 @@ LLM_MODEL=google/gemini-3.5-flash-lite
 
 | Variable | Purpose |
 | --- | --- |
+| `AFFINEBOT_URL` | Affinebot base URL. With `AFFINEBOT_ADMIN_TOKEN`, enables one-click linking (managed mode). |
+| `AFFINEBOT_ADMIN_TOKEN` | Affinebot admin token used to list orgs and mint or revoke workspace clients. Server-side only. |
 | `AFFINEBOT_TIMEOUT_S` | Timeout for calls to Affinebot (default `10`). |
 | `UPDATER_SECRET_KEY` | Optional. Encrypts stored Affinebot link tokens. Empty = tokens are stored as plain text. |
 | `GITHUB_WEBHOOK_SECRET` | Secret for the GitHub App webhook at `/api/github/webhook`. |

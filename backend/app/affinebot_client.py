@@ -114,8 +114,11 @@ class AffinebotClient:
 
     # --- plumbing ------------------------------------------------------------------------
 
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._secret}", "X-Link-Client": self.client_id}
+
     def _request(self, method: str, path: str, *, params: dict | None = None, json: dict | None = None) -> Any:
-        headers = {"Authorization": f"Bearer {self._secret}", "X-Link-Client": self.client_id}
+        headers = self._headers()
         try:
             with httpx.Client(transport=self._transport, timeout=self.timeout, follow_redirects=False) as http:
                 response = http.request(method, self.base_url + path, params=params, json=json, headers=headers)
@@ -171,6 +174,45 @@ class AffinebotClient:
         )
         _cache.set(key, data, ITEMS_TTL_S)
         return data
+
+
+class AffinebotAdminClient(AffinebotClient):
+    """Server-level admin calls (managed mode). Same timeout, error map and transport hook as the runtime client.
+
+    The admin token is only ever sent as the Authorization header; it is never put in errors or logs.
+    """
+
+    def __init__(self, base_url: str, admin_token: str, transport: httpx.BaseTransport | None = None, timeout: float | None = None):
+        super().__init__(base_url, "", admin_token, transport=transport, timeout=timeout)
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._secret}"}
+
+    def admin_owners(self) -> dict:
+        """GET /link/admin/owners -> {owners:[{owner, installation_id, installed}]}."""
+        return self._request("GET", "/link/admin/owners")
+
+    def admin_mint(self, client_id: str, label: str, owner: str) -> dict:
+        """POST /link/admin/clients (rotate=true) -> {client_id, token, owner, installation_id}."""
+        return self._request(
+            "POST",
+            "/link/admin/clients",
+            json={"client_id": client_id, "label": label, "owner": owner, "rotate": True},
+        )
+
+    def admin_revoke(self, client_id: str) -> None:
+        """DELETE /link/admin/clients/{client_id}; 404 (unknown client) surfaces as AffinebotError."""
+        self._request("DELETE", f"/link/admin/clients/{client_id}")
+
+
+def managed_mode() -> bool:
+    settings = get_settings()
+    return bool(settings.affinebot_url.strip() and settings.affinebot_admin_token.strip())
+
+
+def admin_client() -> AffinebotAdminClient:
+    settings = get_settings()
+    return AffinebotAdminClient(settings.affinebot_url.strip(), settings.affinebot_admin_token.strip())
 
 
 def client_for_workspace(db: Session, workspace_id: str, transport: httpx.BaseTransport | None = None) -> AffinebotClient:
